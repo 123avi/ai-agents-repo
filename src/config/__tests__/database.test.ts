@@ -1,4 +1,4 @@
-import { DB_CONFIG, validateDatabaseConfig } from '../database.js';
+import { config, validateDatabaseConfig } from '../database';
 
 describe('Database Configuration', () => {
   const originalEnv = process.env;
@@ -8,93 +8,113 @@ describe('Database Configuration', () => {
     process.env = { ...originalEnv };
   });
 
-  afterAll(() => {
+  afterEach(() => {
     process.env = originalEnv;
   });
 
-  describe('DB_CONFIG', () => {
-    it('should use environment variables when provided', () => {
-      process.env.DATABASE_URL = 'postgresql://test:test@localhost/testdb';
-      process.env.DB_MAX_CONNECTIONS = '50';
-      process.env.DB_CONNECTION_TIMEOUT = '20000';
-      process.env.DB_IDLE_TIMEOUT = '5000';
-      
-      // Re-import to get fresh config with new env vars
-      jest.resetModules();
-      const { DB_CONFIG: freshConfig } = require('../database.js');
-      
-      expect(freshConfig.connectionString).toBe('postgresql://test:test@localhost/testdb');
-      expect(freshConfig.max).toBe(50);
-      expect(freshConfig.connectionTimeoutMillis).toBe(20000);
-      expect(freshConfig.idleTimeoutMillis).toBe(5000);
-      expect(freshConfig.min).toBe(20); // Should always be 20 per NFR
+  describe('Environment Variable Validation', () => {
+    it('should throw error when required env vars are missing', () => {
+      delete process.env.DB_HOST;
+      delete process.env.DB_NAME;
+      delete process.env.DB_USER;
+      delete process.env.DB_PASSWORD;
+
+      expect(() => {
+        require('../database');
+      }).toThrow('Missing required environment variables: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD');
     });
 
-    it('should use defaults when environment variables are not provided', () => {
-      delete process.env.DATABASE_URL;
-      delete process.env.DB_MAX_CONNECTIONS;
-      delete process.env.DB_CONNECTION_TIMEOUT;
-      delete process.env.DB_IDLE_TIMEOUT;
-      
-      jest.resetModules();
-      const { DB_CONFIG: freshConfig } = require('../database.js');
-      
-      expect(freshConfig.connectionString).toBe('');
-      expect(freshConfig.min).toBe(20);
-      expect(freshConfig.max).toBe(100);
-      expect(freshConfig.connectionTimeoutMillis).toBe(30000);
-      expect(freshConfig.idleTimeoutMillis).toBe(10000);
-    });
+    it('should throw error for partial missing env vars', () => {
+      process.env.DB_HOST = 'localhost';
+      process.env.DB_NAME = 'testdb';
+      // Missing DB_USER and DB_PASSWORD
 
-    it('should handle invalid numeric environment variables', () => {
-      process.env.DB_MAX_CONNECTIONS = 'invalid';
-      process.env.DB_CONNECTION_TIMEOUT = 'also-invalid';
-      
-      jest.resetModules();
-      const { DB_CONFIG: freshConfig } = require('../database.js');
-      
-      expect(freshConfig.max).toBe(100); // Should fall back to default
-      expect(freshConfig.connectionTimeoutMillis).toBe(30000); // Should fall back to default
+      expect(() => {
+        require('../database');
+      }).toThrow('Missing required environment variables: DB_USER, DB_PASSWORD');
     });
   });
 
-  describe('validateDatabaseConfig', () => {
-    it('should pass validation with valid DATABASE_URL', () => {
-      process.env.DATABASE_URL = 'postgresql://test:test@localhost/testdb';
-      
-      jest.resetModules();
-      const { validateDatabaseConfig: freshValidate } = require('../database.js');
-      
-      expect(() => freshValidate()).not.toThrow();
+  describe('Configuration Loading', () => {
+    beforeEach(() => {
+      process.env.DB_HOST = 'localhost';
+      process.env.DB_NAME = 'testdb';
+      process.env.DB_USER = 'testuser';
+      process.env.DB_PASSWORD = 'testpass';
     });
 
-    it('should throw error when DATABASE_URL is missing', () => {
-      delete process.env.DATABASE_URL;
+    it('should load configuration with default values', () => {
+      const { config } = require('../database');
       
-      jest.resetModules();
-      const { validateDatabaseConfig: freshValidate } = require('../database.js');
-      
-      expect(() => freshValidate()).toThrow('DATABASE_URL environment variable is required');
+      expect(config).toEqual({
+        host: 'localhost',
+        port: 5432,
+        database: 'testdb',
+        user: 'testuser',
+        password: 'testpass',
+        ssl: false,
+        maxConnections: 20,
+        minConnections: 5
+      });
     });
 
-    it('should throw error when DATABASE_URL is empty string', () => {
-      process.env.DATABASE_URL = '';
+    it('should load configuration with custom values', () => {
+      process.env.DB_PORT = '3306';
+      process.env.DB_SSL = 'true';
+      process.env.DB_MAX_CONNECTIONS = '15';
+      process.env.DB_MIN_CONNECTIONS = '3';
       
-      jest.resetModules();
-      const { validateDatabaseConfig: freshValidate } = require('../database.js');
+      const { config } = require('../database');
       
-      expect(() => freshValidate()).toThrow('DATABASE_URL environment variable is required');
+      expect(config).toEqual({
+        host: 'localhost',
+        port: 3306,
+        database: 'testdb',
+        user: 'testuser',
+        password: 'testpass',
+        ssl: { rejectUnauthorized: false },
+        maxConnections: 15,
+        minConnections: 3
+      });
+    });
+  });
+
+  describe('Configuration Validation', () => {
+    beforeEach(() => {
+      process.env.DB_HOST = 'localhost';
+      process.env.DB_NAME = 'testdb';
+      process.env.DB_USER = 'testuser';
+      process.env.DB_PASSWORD = 'testpass';
     });
 
-    it('should throw error when minimum connections is below NFR requirement', () => {
-      process.env.DATABASE_URL = 'postgresql://test:test@localhost/testdb';
-      
-      jest.resetModules();
-      // Mock DB_CONFIG to have invalid min connections
-      const dbModule = require('../database.js');
-      dbModule.DB_CONFIG.min = 10; // Below required 20
-      
-      expect(() => dbModule.validateDatabaseConfig()).toThrow('Minimum connections must be at least 20 per NFR requirements');
+    it('should pass validation with valid config', () => {
+      const { validateDatabaseConfig } = require('../database');
+      expect(() => validateDatabaseConfig()).not.toThrow();
+    });
+
+    it('should throw error for invalid port', () => {
+      process.env.DB_PORT = '0';
+      const { validateDatabaseConfig } = require('../database');
+      expect(() => validateDatabaseConfig()).toThrow('Invalid database port: 0');
+    });
+
+    it('should throw error when max < min connections', () => {
+      process.env.DB_MAX_CONNECTIONS = '5';
+      process.env.DB_MIN_CONNECTIONS = '10';
+      const { validateDatabaseConfig } = require('../database');
+      expect(() => validateDatabaseConfig()).toThrow('DB_MAX_CONNECTIONS must be greater than or equal to DB_MIN_CONNECTIONS');
+    });
+
+    it('should throw error for zero min connections', () => {
+      process.env.DB_MIN_CONNECTIONS = '0';
+      const { validateDatabaseConfig } = require('../database');
+      expect(() => validateDatabaseConfig()).toThrow('DB_MIN_CONNECTIONS must be at least 1');
+    });
+
+    it('should throw error for excessive max connections', () => {
+      process.env.DB_MAX_CONNECTIONS = '150';
+      const { validateDatabaseConfig } = require('../database');
+      expect(() => validateDatabaseConfig()).toThrow('DB_MAX_CONNECTIONS should not exceed 100 for typical applications');
     });
   });
 });
