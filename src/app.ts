@@ -1,71 +1,59 @@
-import express, { Application, Request, Response, NextFunction } from 'express';
-import { corsMiddleware } from './middleware/cors.js';
-import { createHealthRouter } from './routes/health.js';
-import { config } from './config/environment.js';
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { createHealthRouter } from './routes/health';
+
+// Load environment variables
+dotenv.config();
 
 /**
- * Error response interface
+ * HTTP status codes used throughout the application
  */
-interface ErrorResponse {
-  error: string;
-  message: string;
-  timestamp: string;
-}
-
-/**
- * HTTP status codes
- */
-const HTTP_STATUS = {
+export const HTTP_STATUS = {
+  OK: 200,
+  CREATED: 201,
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
   NOT_FOUND: 404,
   INTERNAL_SERVER_ERROR: 500
 } as const;
 
 /**
- * Create and configure Express application
- * @returns Configured Express application
+ * Default server configuration
  */
-export function createApp(): Application {
+const DEFAULT_PORT = 3000;
+const DEFAULT_HOST = '0.0.0.0';
+
+/**
+ * Creates and configures the Express application
+ * @returns {express.Application} Configured Express app instance
+ */
+export function createApp(): express.Application {
   const app = express();
-  
+
   // Basic middleware
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-  
-  // CORS middleware
-  app.use(corsMiddleware);
-  
-  // Health check route
-  app.use('/', createHealthRouter());
-  
-  // 404 handler
-  app.use('*', (req: Request, res: Response<ErrorResponse>) => {
-    const errorResponse: ErrorResponse = {
-      error: 'Not Found',
-      message: `Route ${req.originalUrl} not found`,
-      timestamp: new Date().toISOString()
-    };
-    
-    res.status(HTTP_STATUS.NOT_FOUND).json(errorResponse);
-  });
-  
-  // Error handler
-  app.use((error: Error, req: Request, res: Response<ErrorResponse>, next: NextFunction) => {
-    console.error('Unhandled error:', {
-      error: error.message,
-      stack: error.stack,
-      url: req.url,
-      method: req.method,
-      timestamp: new Date().toISOString()
-    });
-    
-    const errorResponse: ErrorResponse = {
-      error: 'Internal Server Error',
-      message: 'An unexpected error occurred',
-      timestamp: new Date().toISOString()
-    };
-    
-    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(errorResponse);
-  });
-  
+  app.use(cors());
+  app.use(express.json());
+
+  // Routes
+  app.use('/api/health', createHealthRouter());
+
   return app;
+}
+
+/**
+ * Gets the port from environment variables or returns default
+ * @returns {number} Port number for the server
+ */
+export function getPort(): number {
+  const port = process.env.PORT;
+  return port ? parseInt(port, 10) : DEFAULT_PORT;
+}
+
+/**
+ * Gets the host from environment variables or returns default
+ * @returns {string} Host address for the server
+ */
+export function getHost(): string {
+  return process.env.HOST || DEFAULT_HOST;
 }
