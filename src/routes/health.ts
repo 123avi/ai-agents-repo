@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { HTTP_STATUS } from '../app';
 
 /**
  * Health check response interface
@@ -10,41 +11,25 @@ interface HealthResponse {
 }
 
 /**
- * Health status constants
- */
-const HEALTH_STATUS = {
-  OK: 'ok'
-} as const;
-
-/**
- * Create health check router
- * @returns Express router with health endpoint
+ * Creates a router for health check endpoints
+ * @returns {Router} Express router with health check routes
  */
 export function createHealthRouter(): Router {
   const router = Router();
-  
+
   /**
    * Health check endpoint
-   * Returns 200 OK with system status
+   * Returns basic application health status
    */
-  router.get('/health', (req: Request, res: Response<HealthResponse>) => {
-    try {
-      const healthResponse: HealthResponse = {
-        status: HEALTH_STATUS.OK,
-        timestamp: new Date().toISOString(),
-        uptime: Math.floor(process.uptime())
-      };
-      
-      res.status(200).json(healthResponse);
-    } catch (error) {
-      console.error('Health check error:', error);
-      res.status(500).json({
-        status: 'error',
-        timestamp: new Date().toISOString(),
-        uptime: 0
-      });
-    }
+  router.get('/', (req: Request, res: Response) => {
+    const healthResponse: HealthResponse = {
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    };
+    
+    res.status(HTTP_STATUS.OK).json(healthResponse);
   });
-  
+
   return router;
 }
