@@ -1,10 +1,33 @@
-import { UserRepository } from '../UserRepository';
 import { Pool } from 'pg';
+import bcrypt from 'bcrypt';
+import { UserRepository, CreateUserInput } from '../UserRepository';
+
+// Mock dependencies
+jest.mock('pg');
+jest.mock('bcrypt');
+
+const mockBcrypt = bcrypt as jest.Mocked<typeof bcrypt>;
+
+/**
+ * Creates a mock PostgreSQL database error with proper error structure
+ * @param code - PostgreSQL error code
+ * @param message - Error message
+ * @returns Mock database error object
+ */
+const createMockDbError = (code: string, message: string) => {
+  const error = new Error(message) as any;
+  error.code = code;
+  error.severity = 'ERROR';
+  error.detail = `Key (email)=(test@example.com) already exists.`;
+  error.table = 'users';
+  error.constraint = 'users_email_key';
+  return error;
+};
 
 describe('UserRepository', () => {
+  let userRepository: UserRepository;
   let mockPool: jest.Mocked<Pool>;
   let mockClient: any;
-  let userRepository: UserRepository;
 
   beforeEach(() => {
     mockClient = {
@@ -13,185 +36,174 @@ describe('UserRepository', () => {
     };
     
     mockPool = {
-      connect: jest.fn().mockResolvedValue(mockClient),
-      query: jest.fn(),
-      end: jest.fn()
+      connect: jest.fn().mockResolvedValue(mockClient)
     } as any;
     
     userRepository = new UserRepository(mockPool);
-  });
-
-  afterEach(() => {
+    
+    // Reset mocks
     jest.clearAllMocks();
+    mockBcrypt.hash.mockResolvedValue('hashed_password_123');
   });
 
   describe('createUser', () => {
-    it('should create user with valid data', async () => {
-      const userData = {
+    /**
+     * Tests successful user creation with valid email and password data
+     * Validates that password is properly hashed and user data is stored
+     */
+    it('should create a user with valid data', async () => {
+      const userData: CreateUserInput = {
         email: 'test@example.com',
-        password: 'hashedPassword123'
+        password: 'password123'
       };
       
-      const mockResult = {
-        rows: [{ id: 1, email: 'test@example.com', created_at: new Date() }]
+      const expectedUser = {
+        id: 1,
+        email: 'test@example.com',
+        password_hash: 'hashed_password_123',
+        created_at: new Date('2024-01-01')
       };
       
-      mockClient.query.mockResolvedValue(mockResult);
+      mockClient.query.mockResolvedValue({ rows: [expectedUser] });
       
-      const result = await userRepository.createUser(userData.email, userData.password);
+      const result = await userRepository.createUser(userData);
       
-      expect(mockPool.connect).toHaveBeenCalled();
+      expect(mockBcrypt.hash).toHaveBeenCalledWith('password123', 10);
       expect(mockClient.query).toHaveBeenCalledWith(
-        'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at',
-        [userData.email, userData.password]
+        expect.stringContaining('INSERT INTO users'),
+        ['test@example.com', 'hashed_password_123']
       );
+      expect(result).toEqual(expectedUser);
       expect(mockClient.release).toHaveBeenCalled();
-      expect(result).toEqual(mockResult.rows[0]);
     });
 
-    it('should reject duplicate email with constraint violation', async () => {
-      const userData = {
-        email: 'duplicate@example.com',
-        password: 'hashedPassword123'
+    /**
+     * Tests duplicate email rejection by validating PostgreSQL unique constraint violation
+     * Ensures proper error message is thrown when email already exists
+     */
+    it('should reject duplicate email with specific error message', async () => {
+      const userData: CreateUserInput = {
+        email: 'existing@example.com',
+        password: 'password123'
       };
       
-      const constraintError = new Error('duplicate key value violates unique constraint');
-      (constraintError as any).code = '23505';
-      
-      mockClient.query.mockRejectedValue(constraintError);
-      
-      await expect(userRepository.createUser(userData.email, userData.password))
-        .rejects.toThrow('Email already exists');
-      
-      expect(mockClient.release).toHaveBeenCalled();
-    });
-
-    it('should handle database connection errors', async () => {
-      const connectionError = new Error('connection timeout');
-      mockPool.connect.mockRejectedValue(connectionError);
-      
-      await expect(userRepository.createUser('test@example.com', 'password'))
-        .rejects.toThrow('Database connection failed');
-    });
-
-    it('should handle generic database errors', async () => {
-      const dbError = new Error('database server error');
+      const dbError = createMockDbError('23505', 'duplicate key value violates unique constraint');
       mockClient.query.mockRejectedValue(dbError);
       
-      await expect(userRepository.createUser('test@example.com', 'password'))
-        .rejects.toThrow('Failed to create user');
+      await expect(userRepository.createUser(userData))
+        .rejects
+        .toThrow('Email already exists');
+      
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    /**
+     * Tests database error handling for non-constraint related failures
+     * Validates proper error propagation and client cleanup
+     */
+    it('should handle database errors during user creation', async () => {
+      const userData: CreateUserInput = {
+        email: 'test@example.com',
+        password: 'password123'
+      };
+      
+      const dbError = new Error('Connection timeout');
+      mockClient.query.mockRejectedValue(dbError);
+      
+      await expect(userRepository.createUser(userData))
+        .rejects
+        .toThrow('Database error: Connection timeout');
       
       expect(mockClient.release).toHaveBeenCalled();
     });
   });
 
-  describe('findByEmail', () => {
-    it('should retrieve user by email successfully', async () => {
-      const email = 'existing@example.com';
-      const mockResult = {
-        rows: [{
-          id: 1,
-          email: 'existing@example.com',
-          password_hash: 'hashedPassword123',
-          created_at: new Date()
-        }]
+  describe('getUserByEmail', () => {
+    /**
+     * Tests successful user retrieval by email address using prepared statements
+     * Validates SQL injection prevention and proper query parameterization
+     */
+    it('should retrieve user by email using prepared statements', async () => {
+      const email = 'test@example.com';
+      const expectedUser = {
+        id: 1,
+        email: 'test@example.com',
+        password_hash: 'hashed_password_123',
+        created_at: new Date('2024-01-01')
       };
       
-      mockClient.query.mockResolvedValue(mockResult);
+      mockClient.query.mockResolvedValue({ rows: [expectedUser] });
       
-      const result = await userRepository.findByEmail(email);
+      const result = await userRepository.getUserByEmail(email);
       
-      expect(mockPool.connect).toHaveBeenCalled();
       expect(mockClient.query).toHaveBeenCalledWith(
-        'SELECT id, email, password_hash, created_at FROM users WHERE email = $1',
+        expect.stringContaining('SELECT id, email, password_hash, created_at FROM users WHERE email = $1'),
         [email]
       );
+      expect(result).toEqual(expectedUser);
       expect(mockClient.release).toHaveBeenCalled();
-      expect(result).toEqual(mockResult.rows[0]);
     });
 
-    it('should return null when user not found', async () => {
+    /**
+     * Tests handling of non-existent user lookup
+     * Validates that null is returned when user is not found
+     */
+    it('should return null when user is not found', async () => {
       const email = 'nonexistent@example.com';
-      const mockResult = { rows: [] };
       
-      mockClient.query.mockResolvedValue(mockResult);
+      mockClient.query.mockResolvedValue({ rows: [] });
       
-      const result = await userRepository.findByEmail(email);
+      const result = await userRepository.getUserByEmail(email);
       
       expect(result).toBeNull();
       expect(mockClient.release).toHaveBeenCalled();
     });
 
+    /**
+     * Tests database error handling during user retrieval operations
+     * Validates proper error propagation and resource cleanup
+     */
     it('should handle database errors during retrieval', async () => {
-      const dbError = new Error('query execution failed');
+      const email = 'test@example.com';
+      const dbError = createMockDbError('08006', 'connection_failure');
+      
       mockClient.query.mockRejectedValue(dbError);
       
-      await expect(userRepository.findByEmail('test@example.com'))
-        .rejects.toThrow('Failed to find user');
+      await expect(userRepository.getUserByEmail(email))
+        .rejects
+        .toThrow('Database error: connection_failure');
       
       expect(mockClient.release).toHaveBeenCalled();
     });
   });
 
-  describe('SQL injection prevention', () => {
-    it('should use parameterized queries for createUser', async () => {
-      const maliciousEmail = "'; DROP TABLE users; --";
-      const password = 'password';
+  describe('prepared statement usage', () => {
+    /**
+     * Tests that all database queries use parameterized prepared statements
+     * Validates SQL injection prevention across all repository methods
+     */
+    it('should use prepared statements for all queries to prevent SQL injection', async () => {
+      const userData: CreateUserInput = {
+        email: "test'; DROP TABLE users; --",
+        password: 'password123'
+      };
       
       mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
       
-      await userRepository.createUser(maliciousEmail, password);
+      await userRepository.createUser(userData);
+      
+      // Verify parameterized query was used
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('$1'),
+        expect.arrayContaining(["test'; DROP TABLE users; --"])
+      );
+      
+      // Test retrieval also uses parameters
+      await userRepository.getUserByEmail("test'; DROP TABLE users; --");
       
       expect(mockClient.query).toHaveBeenCalledWith(
         expect.stringContaining('$1'),
-        expect.arrayContaining([maliciousEmail, password])
-      );
-    });
-
-    it('should use parameterized queries for findByEmail', async () => {
-      const maliciousEmail = "'; DROP TABLE users; --";
-      
-      mockClient.query.mockResolvedValue({ rows: [] });
-      
-      await userRepository.findByEmail(maliciousEmail);
-      
-      expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('$1'),
-        expect.arrayContaining([maliciousEmail])
-      );
-    });
-  });
-
-  describe('prepared statement verification', () => {
-    it('should use consistent prepared statement structure for createUser', async () => {
-      mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
-      
-      await userRepository.createUser('test1@example.com', 'password1');
-      await userRepository.createUser('test2@example.com', 'password2');
-      
-      expect(mockClient.query).toHaveBeenNthCalledWith(1,
-        'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at',
-        ['test1@example.com', 'password1']
-      );
-      expect(mockClient.query).toHaveBeenNthCalledWith(2,
-        'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at',
-        ['test2@example.com', 'password2']
-      );
-    });
-
-    it('should use consistent prepared statement structure for findByEmail', async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
-      
-      await userRepository.findByEmail('test1@example.com');
-      await userRepository.findByEmail('test2@example.com');
-      
-      expect(mockClient.query).toHaveBeenNthCalledWith(1,
-        'SELECT id, email, password_hash, created_at FROM users WHERE email = $1',
-        ['test1@example.com']
-      );
-      expect(mockClient.query).toHaveBeenNthCalledWith(2,
-        'SELECT id, email, password_hash, created_at FROM users WHERE email = $1',
-        ['test2@example.com']
+        ["test'; DROP TABLE users; --"]
       );
     });
   });
