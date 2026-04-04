@@ -1,219 +1,110 @@
+import { createDatabasePool, closeDatabasePool } from '../config';
 import { Pool } from 'pg';
-import { DB_CONFIG, getConnectionPool, checkConnectionHealth, closeConnectionPool } from '../config';
 
 // Mock pg module
-jest.mock('pg', () => {
-  const mockConnect = jest.fn();
-  const mockQuery = jest.fn();
-  const mockRelease = jest.fn();
-  const mockEnd = jest.fn();
-  const mockOn = jest.fn();
-  
-  const mockClient = {
-    query: mockQuery,
-    release: mockRelease,
-  };
-  
-  const mockPool = {
-    connect: mockConnect,
-    end: mockEnd,
-    on: mockOn,
-  };
-  
-  return {
-    Pool: jest.fn(() => mockPool),
-    __mocks: {
-      connect: mockConnect,
-      query: mockQuery,
-      release: mockRelease,
-      end: mockEnd,
-      on: mockOn,
-      client: mockClient,
-      pool: mockPool,
-    },
-  };
-});
+jest.mock('pg');
+const MockPool = Pool as jest.MockedClass<typeof Pool>;
 
-const { Pool: MockPool } = jest.requireMock('pg');
-const mocks = (jest.requireMock('pg') as any).__mocks;
-
-describe('Database Configuration', () => {
+describe('Database Config', () => {
   const originalEnv = process.env;
   
   beforeEach(() => {
     jest.resetModules();
-    jest.clearAllMocks();
     process.env = { ...originalEnv };
+    MockPool.mockClear();
   });
   
-  afterEach(() => {
+  afterAll(() => {
     process.env = originalEnv;
   });
-  
-  describe('DB_CONFIG validation', () => {
-    it('should throw error when DATABASE_URL is not set', () => {
-      delete process.env.DATABASE_URL;
+
+  describe('createDatabasePool', () => {
+    it('should create pool with required environment variables', () => {
+      process.env.DB_USER = 'testuser';
+      process.env.DB_PASSWORD = 'testpass';
+      process.env.DB_HOST = 'localhost';
+      process.env.DB_PORT = '5432';
+      process.env.DB_NAME = 'testdb';
       
-      expect(() => {
-        jest.isolateModules(() => {
-          require('../config');
-        });
-      }).toThrow('DATABASE_URL environment variable is required and cannot be empty');
-    });
-    
-    it('should throw error when DATABASE_URL is empty string', () => {
-      process.env.DATABASE_URL = '';
-      
-      expect(() => {
-        jest.isolateModules(() => {
-          require('../config');
-        });
-      }).toThrow('DATABASE_URL environment variable is required and cannot be empty');
-    });
-    
-    it('should throw error when DATABASE_URL is only whitespace', () => {
-      process.env.DATABASE_URL = '   ';
-      
-      expect(() => {
-        jest.isolateModules(() => {
-          require('../config');
-        });
-      }).toThrow('DATABASE_URL environment variable is required and cannot be empty');
-    });
-    
-    it('should create valid config when DATABASE_URL is provided', () => {
-      process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/testdb';
-      
-      const config = jest.isolateModules(() => {
-        return require('../config').DB_CONFIG;
-      });
-      
-      expect(config.connectionString).toBe('postgresql://user:pass@localhost:5432/testdb');
-      expect(config.min).toBe(20);
-      expect(config.max).toBe(100);
-      expect(config.idleTimeoutMillis).toBe(30000);
-      expect(config.connectionTimeoutMillis).toBe(2000);
-    });
-  });
-  
-  describe('getConnectionPool', () => {
-    beforeEach(() => {
-      process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/testdb';
-    });
-    
-    it('should create a new pool on first call', () => {
-      const pool = getConnectionPool();
+      createDatabasePool();
       
       expect(MockPool).toHaveBeenCalledWith({
-        connectionString: 'postgresql://user:pass@localhost:5432/testdb',
-        min: 20,
-        max: 100,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
+        host: 'localhost',
+        port: 5432,
+        database: 'testdb',
+        user: 'testuser',
+        password: 'testpass',
+        min: 5,
+        max: 20,
+        connectionTimeoutMillis: 30000,
+        idleTimeoutMillis: 10000
       });
-      expect(mocks.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
-    
-    it('should return same pool on subsequent calls', () => {
-      const pool1 = getConnectionPool();
-      const pool2 = getConnectionPool();
+
+    it('should use default values when optional env vars not set', () => {
+      process.env.DB_USER = 'testuser';
+      process.env.DB_PASSWORD = 'testpass';
+      // DB_HOST, DB_PORT, DB_NAME not set
       
-      expect(pool1).toBe(pool2);
-      expect(MockPool).toHaveBeenCalledTimes(1);
+      createDatabasePool();
+      
+      expect(MockPool).toHaveBeenCalledWith({
+        host: 'localhost',
+        port: 5432,
+        database: 'todos_db',
+        user: 'testuser',
+        password: 'testpass',
+        min: 5,
+        max: 20,
+        connectionTimeoutMillis: 30000,
+        idleTimeoutMillis: 10000
+      });
     });
-  });
-  
-  describe('checkConnectionHealth', () => {
-    beforeEach(() => {
-      process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/testdb';
-      mocks.connect.mockResolvedValue(mocks.client);
+
+    it('should throw error when DB_USER is missing', () => {
+      process.env.DB_PASSWORD = 'testpass';
+      // DB_USER not set
+      
+      expect(() => createDatabasePool()).toThrow('DB_USER environment variable is required');
     });
-    
-    it('should return true when health check passes', async () => {
-      mocks.query.mockResolvedValue({ rows: [{ health_check: 1 }] });
+
+    it('should throw error when DB_PASSWORD is missing', () => {
+      process.env.DB_USER = 'testuser';
+      // DB_PASSWORD not set
       
-      const result = await checkConnectionHealth();
-      
-      expect(result).toBe(true);
-      expect(mocks.connect).toHaveBeenCalled();
-      expect(mocks.query).toHaveBeenCalledWith('SELECT 1 as health_check');
-      expect(mocks.release).toHaveBeenCalled();
+      expect(() => createDatabasePool()).toThrow('DB_PASSWORD environment variable is required');
     });
-    
-    it('should return false when query fails', async () => {
-      mocks.query.mockRejectedValue(new Error('Connection failed'));
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+
+    it('should handle custom port as string', () => {
+      process.env.DB_USER = 'testuser';
+      process.env.DB_PASSWORD = 'testpass';
+      process.env.DB_PORT = '5433';
       
-      const result = await checkConnectionHealth();
+      createDatabasePool();
       
-      expect(result).toBe(false);
-      expect(mocks.release).toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalledWith('Database health check failed:', expect.any(Error));
-      
-      consoleSpy.mockRestore();
-    });
-    
-    it('should return false when connection fails', async () => {
-      mocks.connect.mockRejectedValue(new Error('Cannot connect'));
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-      
-      const result = await checkConnectionHealth();
-      
-      expect(result).toBe(false);
-      expect(mocks.release).not.toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalledWith('Database health check failed:', expect.any(Error));
-      
-      consoleSpy.mockRestore();
-    });
-    
-    it('should return false when health check returns unexpected result', async () => {
-      mocks.query.mockResolvedValue({ rows: [] });
-      
-      const result = await checkConnectionHealth();
-      
-      expect(result).toBe(false);
-      expect(mocks.release).toHaveBeenCalled();
+      expect(MockPool).toHaveBeenCalledWith(
+        expect.objectContaining({ port: 5433 })
+      );
     });
   });
-  
-  describe('closeConnectionPool', () => {
-    beforeEach(() => {
-      process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/testdb';
-    });
-    
+
+  describe('closeDatabasePool', () => {
     it('should close pool successfully', async () => {
-      mocks.end.mockResolvedValue(undefined);
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      const mockPool = {
+        end: jest.fn().mockResolvedValue(undefined)
+      } as unknown as Pool;
       
-      // Create pool first
-      getConnectionPool();
-      
-      await closeConnectionPool();
-      
-      expect(mocks.end).toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalledWith('Database connection pool closed successfully');
-      
-      consoleSpy.mockRestore();
+      await expect(closeDatabasePool(mockPool)).resolves.not.toThrow();
+      expect(mockPool.end).toHaveBeenCalled();
     });
-    
+
     it('should handle pool close errors', async () => {
-      const closeError = new Error('Close failed');
-      mocks.end.mockRejectedValue(closeError);
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+      const closeError = new Error('Failed to close pool');
+      const mockPool = {
+        end: jest.fn().mockRejectedValue(closeError)
+      } as unknown as Pool;
       
-      // Create pool first
-      getConnectionPool();
-      
-      await expect(closeConnectionPool()).rejects.toThrow('Close failed');
-      expect(consoleSpy).toHaveBeenCalledWith('Error closing connection pool:', closeError);
-      
-      consoleSpy.mockRestore();
-    });
-    
-    it('should do nothing when no pool exists', async () => {
-      await closeConnectionPool();
-      
-      expect(mocks.end).not.toHaveBeenCalled();
+      await expect(closeDatabasePool(mockPool)).rejects.toThrow('Failed to close pool');
     });
   });
 });
