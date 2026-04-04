@@ -1,66 +1,27 @@
-import pino, { Logger } from 'pino';
-
-/** Log levels supported by the application */
-const LOG_LEVELS = {
-  TRACE: 'trace',
-  DEBUG: 'debug',
-  INFO: 'info',
-  WARN: 'warn',
-  ERROR: 'error',
-  FATAL: 'fatal'
-} as const;
-
-/** Default log level for production */
-const DEFAULT_LOG_LEVEL = 'info';
-
 /**
- * Creates and configures a production-ready logger using Pino
- * Supports structured logging with proper log levels and formatting
- * @returns {Logger} Configured Pino logger instance
+ * Simple logger interface for structured logging
  */
-function createLogger(): Logger {
-  const logLevel = process.env.LOG_LEVEL || DEFAULT_LOG_LEVEL;
-  
-  const pinoConfig = {
-    level: logLevel,
-    formatters: {
-      level: (label: string) => {
-        return { level: label.toUpperCase() };
-      },
-    },
-    timestamp: pino.stdTimeFunctions.isoTime,
-    ...(process.env.NODE_ENV === 'production' 
-      ? {} 
-      : { transport: { target: 'pino-pretty', options: { colorize: true } } }
-    )
-  };
-  
-  return pino(pinoConfig);
-}
-
-/** Global logger instance */
-export const logger = createLogger();
-
-/**
- * Logs database connection events with structured data
- * @param {string} event - The database event type
- * @param {Record<string, unknown>} metadata - Additional event metadata
- */
-export function logDatabaseEvent(event: string, metadata: Record<string, unknown> = {}): void {
-  logger.info({ event, ...metadata }, `Database event: ${event}`);
+export interface Logger {
+  info(message: string, meta?: Record<string, any>): void;
+  warn(message: string, meta?: Record<string, any>): void;
+  error(message: string, meta?: Record<string, any>): void;
 }
 
 /**
- * Logs database errors with proper error context
- * @param {string} operation - The database operation that failed
- * @param {Error} error - The error that occurred
- * @param {Record<string, unknown>} context - Additional error context
+ * Basic console logger implementation
  */
-export function logDatabaseError(operation: string, error: Error, context: Record<string, unknown> = {}): void {
-  logger.error({ 
-    operation, 
-    error: error.message, 
-    stack: error.stack,
-    ...context 
-  }, `Database operation failed: ${operation}`);
+class ConsoleLogger implements Logger {
+  info(message: string, meta?: Record<string, any>): void {
+    console.log(JSON.stringify({ level: 'info', message, ...meta, timestamp: new Date().toISOString() }));
+  }
+
+  warn(message: string, meta?: Record<string, any>): void {
+    console.warn(JSON.stringify({ level: 'warn', message, ...meta, timestamp: new Date().toISOString() }));
+  }
+
+  error(message: string, meta?: Record<string, any>): void {
+    console.error(JSON.stringify({ level: 'error', message, ...meta, timestamp: new Date().toISOString() }));
+  }
 }
+
+export const logger = new ConsoleLogger();
