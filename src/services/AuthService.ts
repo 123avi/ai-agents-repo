@@ -1,121 +1,79 @@
-import bcrypt from 'bcrypt';
-import { IUserRepository } from '../repositories/IUserRepository';
-import { IJWTHandler } from '../security/IJWTHandler';
-import { IPasswordHasher } from '../security/IPasswordHasher';
-
-interface RegisterRequest {
-  email: string;
-  password: string;
-}
-
-interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-interface RegisterResponse {
-  id: number;
-}
-
-interface LoginResponse {
-  token: string;
-}
-
-export class AuthServiceError extends Error {
-  public readonly code: string;
-  
-  constructor(message: string, code: string) {
-    super(message);
-    this.code = code;
-  }
-}
+import { IUserRepository } from '../repositories/interfaces/IUserRepository';
+import { IPasswordHasher } from '../security/interfaces/IPasswordHasher';
+import { IJwtHandler } from '../security/interfaces/IJwtHandler';
+import { User } from '../models/User';
+import { ConflictError, UnauthorizedError } from '../errors/AppErrors';
 
 /**
- * Authentication service handling user registration and login business logic
+ * Authentication service handling user registration and login operations
  */
 export class AuthService {
-  private readonly userRepository: IUserRepository;
-  private readonly passwordHasher: IPasswordHasher;
-  private readonly jwtHandler: IJWTHandler;
-
+  /**
+   * Creates an instance of AuthService
+   * @param userRepository - Repository for user data operations
+   * @param passwordHasher - Service for password hashing
+   * @param jwtHandler - Service for JWT token operations
+   */
   constructor(
-    userRepository: IUserRepository,
-    passwordHasher: IPasswordHasher,
-    jwtHandler: IJWTHandler
-  ) {
-    this.userRepository = userRepository;
-    this.passwordHasher = passwordHasher;
-    this.jwtHandler = jwtHandler;
-  }
+    private readonly userRepository: IUserRepository,
+    private readonly passwordHasher: IPasswordHasher,
+    private readonly jwtHandler: IJwtHandler
+  ) {}
 
   /**
-   * Register a new user with email uniqueness validation
-   * @param request - Registration request containing email and password
-   * @returns Promise resolving to user ID
-   * @throws AuthServiceError for validation errors or duplicate email
+   * Registers a new user with email uniqueness validation
+   * @param email - User's email address
+   * @param password - User's plain text password
+   * @returns Promise resolving to created user's ID
+   * @throws ConflictError if email already exists
    */
-  async register(request: RegisterRequest): Promise<RegisterResponse> {
+  async register(email: string, password: string): Promise<number> {
     try {
-      // Check if email already exists
-      const existingUser = await this.userRepository.findByEmail(request.email);
+      const existingUser = await this.userRepository.findByEmail(email);
       if (existingUser) {
-        throw new AuthServiceError('Email already registered', 'DUPLICATE_EMAIL');
+        throw new ConflictError('Email already registered');
       }
 
-      // Hash password before storage
-      const hashedPassword = await this.passwordHasher.hash(request.password);
-
-      // Create user
-      const user = await this.userRepository.create({
-        email: request.email,
-        password: hashedPassword
-      });
-
-      return { id: user.id };
+      const hashedPassword = await this.passwordHasher.hash(password);
+      
+      const user = new User(email, hashedPassword);
+      const createdUser = await this.userRepository.create(user);
+      
+      return createdUser.id!;
     } catch (error) {
-      if (error instanceof AuthServiceError) {
+      if (error instanceof ConflictError) {
         throw error;
       }
-      throw new AuthServiceError('Registration failed', 'REGISTRATION_ERROR');
+      throw new Error(`Registration failed: ${error}`);
     }
   }
 
   /**
-   * Authenticate user credentials and generate JWT token
-   * @param request - Login request containing email and password
+   * Authenticates user credentials and generates JWT token
+   * @param email - User's email address
+   * @param password - User's plain text password
    * @returns Promise resolving to JWT token
-   * @throws AuthServiceError for invalid credentials
+   * @throws UnauthorizedError if credentials are invalid
    */
-  async login(request: LoginRequest): Promise<LoginResponse> {
+  async login(email: string, password: string): Promise<string> {
     try {
-      // Find user by email
-      const user = await this.userRepository.findByEmail(request.email);
+      const user = await this.userRepository.findByEmail(email);
       if (!user) {
-        throw new AuthServiceError('Invalid credentials', 'INVALID_CREDENTIALS');
+        throw new UnauthorizedError('Invalid credentials');
       }
 
-      // Verify password
-      const isValidPassword = await this.passwordHasher.verify(
-        request.password,
-        user.password
-      );
-      
-      if (!isValidPassword) {
-        throw new AuthServiceError('Invalid credentials', 'INVALID_CREDENTIALS');
+      const isPasswordValid = await this.passwordHasher.verify(password, user.password);
+      if (!isPasswordValid) {
+        throw new UnauthorizedError('Invalid credentials');
       }
 
-      // Generate JWT token
-      const token = await this.jwtHandler.generateToken({
-        userId: user.id,
-        email: user.email
-      });
-
-      return { token };
+      const token = this.jwtHandler.generateToken({ userId: user.id!, email: user.email });
+      return token;
     } catch (error) {
-      if (error instanceof AuthServiceError) {
+      if (error instanceof UnauthorizedError) {
         throw error;
       }
-      throw new AuthServiceError('Authentication failed', 'AUTH_ERROR');
+      throw new Error(`Login failed: ${error}`);
     }
   }
 }
