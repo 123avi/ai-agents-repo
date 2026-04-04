@@ -1,66 +1,45 @@
-import pino, { Logger } from 'pino';
-
-/** Log levels supported by the application */
-const LOG_LEVELS = {
-  TRACE: 'trace',
-  DEBUG: 'debug',
-  INFO: 'info',
-  WARN: 'warn',
-  ERROR: 'error',
-  FATAL: 'fatal'
-} as const;
-
-/** Default log level for production */
-const DEFAULT_LOG_LEVEL = 'info';
-
 /**
- * Creates and configures a production-ready logger using Pino
- * Supports structured logging with proper log levels and formatting
- * @returns {Logger} Configured Pino logger instance
+ * Logger utility for application-wide logging
  */
-function createLogger(): Logger {
-  const logLevel = process.env.LOG_LEVEL || DEFAULT_LOG_LEVEL;
-  
-  const pinoConfig = {
-    level: logLevel,
-    formatters: {
-      level: (label: string) => {
-        return { level: label.toUpperCase() };
-      },
-    },
-    timestamp: pino.stdTimeFunctions.isoTime,
-    ...(process.env.NODE_ENV === 'production' 
-      ? {} 
-      : { transport: { target: 'pino-pretty', options: { colorize: true } } }
-    )
-  };
-  
-  return pino(pinoConfig);
+export class Logger {
+  /**
+   * Logs error messages with timestamp
+   * @param message - Error message
+   * @param error - Optional error object or additional context
+   */
+  error(message: string, error?: any): void {
+    const timestamp = new Date().toISOString();
+    const errorInfo = error instanceof Error ? error.stack : JSON.stringify(error);
+    
+    console.error(`[${timestamp}] ERROR: ${message}`, errorInfo || '');
+    
+    // In production, this would integrate with external logging service
+    // like Winston, Bunyan, or cloud logging providers
+  }
+
+  /**
+   * Logs info messages with timestamp
+   * @param message - Info message
+   * @param context - Optional context data
+   */
+  info(message: string, context?: any): void {
+    const timestamp = new Date().toISOString();
+    const contextInfo = context ? JSON.stringify(context) : '';
+    
+    console.log(`[${timestamp}] INFO: ${message}`, contextInfo);
+  }
+
+  /**
+   * Logs warning messages with timestamp
+   * @param message - Warning message
+   * @param context - Optional context data
+   */
+  warn(message: string, context?: any): void {
+    const timestamp = new Date().toISOString();
+    const contextInfo = context ? JSON.stringify(context) : '';
+    
+    console.warn(`[${timestamp}] WARN: ${message}`, contextInfo);
+  }
 }
 
-/** Global logger instance */
-export const logger = createLogger();
-
-/**
- * Logs database connection events with structured data
- * @param {string} event - The database event type
- * @param {Record<string, unknown>} metadata - Additional event metadata
- */
-export function logDatabaseEvent(event: string, metadata: Record<string, unknown> = {}): void {
-  logger.info({ event, ...metadata }, `Database event: ${event}`);
-}
-
-/**
- * Logs database errors with proper error context
- * @param {string} operation - The database operation that failed
- * @param {Error} error - The error that occurred
- * @param {Record<string, unknown>} context - Additional error context
- */
-export function logDatabaseError(operation: string, error: Error, context: Record<string, unknown> = {}): void {
-  logger.error({ 
-    operation, 
-    error: error.message, 
-    stack: error.stack,
-    ...context 
-  }, `Database operation failed: ${operation}`);
-}
+export const logger = new Logger();
