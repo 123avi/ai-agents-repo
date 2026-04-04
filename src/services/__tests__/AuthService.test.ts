@@ -1,26 +1,23 @@
-import { AuthService, AuthServiceError } from '../AuthService';
-import { IUserRepository, User, CreateUserRequest } from '../../repositories/IUserRepository';
-import { IPasswordHasher } from '../../security/IPasswordHasher';
-import { IJWTHandler, JWTPayload } from '../../security/IJWTHandler';
+import { AuthService } from '../AuthService';
+import { IUserRepository } from '../../repositories/interfaces/IUserRepository';
+import { IPasswordHasher } from '../../security/interfaces/IPasswordHasher';
+import { IJwtHandler } from '../../security/interfaces/IJwtHandler';
+import { User } from '../../models/User';
+import { ConflictError, UnauthorizedError } from '../../errors/AppErrors';
 
 describe('AuthService', () => {
   let authService: AuthService;
   let mockUserRepository: jest.Mocked<IUserRepository>;
   let mockPasswordHasher: jest.Mocked<IPasswordHasher>;
-  let mockJWTHandler: jest.Mocked<IJWTHandler>;
-
-  const mockUser: User = {
-    id: 1,
-    email: 'test@example.com',
-    password: 'hashedpassword',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
+  let mockJwtHandler: jest.Mocked<IJwtHandler>;
 
   beforeEach(() => {
     mockUserRepository = {
       findByEmail: jest.fn(),
-      create: jest.fn()
+      create: jest.fn(),
+      findById: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn()
     };
 
     mockPasswordHasher = {
@@ -28,7 +25,7 @@ describe('AuthService', () => {
       verify: jest.fn()
     };
 
-    mockJWTHandler = {
+    mockJwtHandler = {
       generateToken: jest.fn(),
       verifyToken: jest.fn()
     };
@@ -36,110 +33,116 @@ describe('AuthService', () => {
     authService = new AuthService(
       mockUserRepository,
       mockPasswordHasher,
-      mockJWTHandler
+      mockJwtHandler
     );
   });
 
   describe('register', () => {
-    it('should register new user successfully', async () => {
-      const request = { email: 'test@example.com', password: 'password123' };
-      
+    it('should register a new user successfully', async () => {
+      const email = 'test@example.com';
+      const password = 'password123';
+      const hashedPassword = 'hashedPassword123';
+      const userId = 1;
+
       mockUserRepository.findByEmail.mockResolvedValue(null);
-      mockPasswordHasher.hash.mockResolvedValue('hashedpassword');
-      mockUserRepository.create.mockResolvedValue(mockUser);
+      mockPasswordHasher.hash.mockResolvedValue(hashedPassword);
+      mockUserRepository.create.mockResolvedValue(new User(email, hashedPassword, userId));
 
-      const result = await authService.register(request);
+      const result = await authService.register(email, password);
 
-      expect(result).toEqual({ id: 1 });
-      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(request.email);
-      expect(mockPasswordHasher.hash).toHaveBeenCalledWith(request.password);
-      expect(mockUserRepository.create).toHaveBeenCalledWith({
-        email: request.email,
-        password: 'hashedpassword'
-      });
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(email);
+      expect(mockPasswordHasher.hash).toHaveBeenCalledWith(password);
+      expect(mockUserRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ email, password: hashedPassword })
+      );
+      expect(result).toBe(userId);
     });
 
-    it('should throw error for duplicate email', async () => {
-      const request = { email: 'test@example.com', password: 'password123' };
+    it('should throw ConflictError when email already exists', async () => {
+      const email = 'existing@example.com';
+      const password = 'password123';
+      const existingUser = new User(email, 'hashedPassword', 1);
+
+      mockUserRepository.findByEmail.mockResolvedValue(existingUser);
+
+      await expect(authService.register(email, password))
+        .rejects.toThrow(ConflictError);
       
-      mockUserRepository.findByEmail.mockResolvedValue(mockUser);
-
-      await expect(authService.register(request)).rejects.toThrow(
-        new AuthServiceError('Email already registered', 'DUPLICATE_EMAIL')
-      );
-
       expect(mockPasswordHasher.hash).not.toHaveBeenCalled();
       expect(mockUserRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should throw generic error for repository failures', async () => {
-      const request = { email: 'test@example.com', password: 'password123' };
-      
-      mockUserRepository.findByEmail.mockRejectedValue(new Error('DB error'));
+    it('should throw error when repository fails', async () => {
+      const email = 'test@example.com';
+      const password = 'password123';
+      const repositoryError = new Error('Database connection failed');
 
-      await expect(authService.register(request)).rejects.toThrow(
-        new AuthServiceError('Registration failed', 'REGISTRATION_ERROR')
-      );
+      mockUserRepository.findByEmail.mockRejectedValue(repositoryError);
+
+      await expect(authService.register(email, password))
+        .rejects.toThrow('Registration failed');
     });
   });
 
   describe('login', () => {
-    it('should authenticate user and return JWT token', async () => {
-      const request = { email: 'test@example.com', password: 'password123' };
-      const expectedToken = 'jwt.token.here';
-      
-      mockUserRepository.findByEmail.mockResolvedValue(mockUser);
+    it('should login successfully with valid credentials', async () => {
+      const email = 'test@example.com';
+      const password = 'password123';
+      const hashedPassword = 'hashedPassword123';
+      const userId = 1;
+      const token = 'jwt.token.here';
+      const user = new User(email, hashedPassword, userId);
+
+      mockUserRepository.findByEmail.mockResolvedValue(user);
       mockPasswordHasher.verify.mockResolvedValue(true);
-      mockJWTHandler.generateToken.mockResolvedValue(expectedToken);
+      mockJwtHandler.generateToken.mockReturnValue(token);
 
-      const result = await authService.login(request);
+      const result = await authService.login(email, password);
 
-      expect(result).toEqual({ token: expectedToken });
-      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(request.email);
-      expect(mockPasswordHasher.verify).toHaveBeenCalledWith(
-        request.password,
-        mockUser.password
-      );
-      expect(mockJWTHandler.generateToken).toHaveBeenCalledWith({
-        userId: mockUser.id,
-        email: mockUser.email
-      });
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith(email);
+      expect(mockPasswordHasher.verify).toHaveBeenCalledWith(password, hashedPassword);
+      expect(mockJwtHandler.generateToken).toHaveBeenCalledWith({ userId, email });
+      expect(result).toBe(token);
     });
 
-    it('should throw error for non-existent user', async () => {
-      const request = { email: 'nonexistent@example.com', password: 'password123' };
-      
+    it('should throw UnauthorizedError when user not found', async () => {
+      const email = 'nonexistent@example.com';
+      const password = 'password123';
+
       mockUserRepository.findByEmail.mockResolvedValue(null);
 
-      await expect(authService.login(request)).rejects.toThrow(
-        new AuthServiceError('Invalid credentials', 'INVALID_CREDENTIALS')
-      );
-
+      await expect(authService.login(email, password))
+        .rejects.toThrow(UnauthorizedError);
+      
       expect(mockPasswordHasher.verify).not.toHaveBeenCalled();
-      expect(mockJWTHandler.generateToken).not.toHaveBeenCalled();
+      expect(mockJwtHandler.generateToken).not.toHaveBeenCalled();
     });
 
-    it('should throw error for invalid password', async () => {
-      const request = { email: 'test@example.com', password: 'wrongpassword' };
-      
-      mockUserRepository.findByEmail.mockResolvedValue(mockUser);
+    it('should throw UnauthorizedError when password is invalid', async () => {
+      const email = 'test@example.com';
+      const password = 'wrongpassword';
+      const hashedPassword = 'hashedPassword123';
+      const userId = 1;
+      const user = new User(email, hashedPassword, userId);
+
+      mockUserRepository.findByEmail.mockResolvedValue(user);
       mockPasswordHasher.verify.mockResolvedValue(false);
 
-      await expect(authService.login(request)).rejects.toThrow(
-        new AuthServiceError('Invalid credentials', 'INVALID_CREDENTIALS')
-      );
-
-      expect(mockJWTHandler.generateToken).not.toHaveBeenCalled();
+      await expect(authService.login(email, password))
+        .rejects.toThrow(UnauthorizedError);
+      
+      expect(mockJwtHandler.generateToken).not.toHaveBeenCalled();
     });
 
-    it('should throw generic error for service failures', async () => {
-      const request = { email: 'test@example.com', password: 'password123' };
-      
-      mockUserRepository.findByEmail.mockRejectedValue(new Error('DB error'));
+    it('should throw error when repository fails during login', async () => {
+      const email = 'test@example.com';
+      const password = 'password123';
+      const repositoryError = new Error('Database connection failed');
 
-      await expect(authService.login(request)).rejects.toThrow(
-        new AuthServiceError('Authentication failed', 'AUTH_ERROR')
-      );
+      mockUserRepository.findByEmail.mockRejectedValue(repositoryError);
+
+      await expect(authService.login(email, password))
+        .rejects.toThrow('Login failed');
     });
   });
 });
