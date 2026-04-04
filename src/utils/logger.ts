@@ -1,66 +1,84 @@
-import pino, { Logger } from 'pino';
+/** Log levels for structured logging */
+type LogLevel = 'info' | 'warn' | 'error' | 'debug';
 
-/** Log levels supported by the application */
-const LOG_LEVELS = {
-  TRACE: 'trace',
-  DEBUG: 'debug',
-  INFO: 'info',
-  WARN: 'warn',
-  ERROR: 'error',
-  FATAL: 'fatal'
-} as const;
-
-/** Default log level for production */
-const DEFAULT_LOG_LEVEL = 'info';
-
-/**
- * Creates and configures a production-ready logger using Pino
- * Supports structured logging with proper log levels and formatting
- * @returns {Logger} Configured Pino logger instance
- */
-function createLogger(): Logger {
-  const logLevel = process.env.LOG_LEVEL || DEFAULT_LOG_LEVEL;
-  
-  const pinoConfig = {
-    level: logLevel,
-    formatters: {
-      level: (label: string) => {
-        return { level: label.toUpperCase() };
-      },
-    },
-    timestamp: pino.stdTimeFunctions.isoTime,
-    ...(process.env.NODE_ENV === 'production' 
-      ? {} 
-      : { transport: { target: 'pino-pretty', options: { colorize: true } } }
-    )
-  };
-  
-  return pino(pinoConfig);
-}
-
-/** Global logger instance */
-export const logger = createLogger();
-
-/**
- * Logs database connection events with structured data
- * @param {string} event - The database event type
- * @param {Record<string, unknown>} metadata - Additional event metadata
- */
-export function logDatabaseEvent(event: string, metadata: Record<string, unknown> = {}): void {
-  logger.info({ event, ...metadata }, `Database event: ${event}`);
+/** Log entry structure */
+interface LogEntry {
+  timestamp: string;
+  level: LogLevel;
+  message: string;
+  data?: unknown;
 }
 
 /**
- * Logs database errors with proper error context
- * @param {string} operation - The database operation that failed
- * @param {Error} error - The error that occurred
- * @param {Record<string, unknown>} context - Additional error context
+ * Simple structured logger for database operations
+ * Outputs JSON formatted logs for production readiness
  */
-export function logDatabaseError(operation: string, error: Error, context: Record<string, unknown> = {}): void {
-  logger.error({ 
-    operation, 
-    error: error.message, 
-    stack: error.stack,
-    ...context 
-  }, `Database operation failed: ${operation}`);
+class Logger {
+  /**
+   * Creates a formatted log entry
+   * @param level Log level
+   * @param message Log message
+   * @param data Optional additional data
+   */
+  private formatLog(level: LogLevel, message: string, data?: unknown): LogEntry {
+    return {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      ...(data && { data })
+    };
+  }
+
+  /**
+   * Outputs log entry to console
+   * @param logEntry Formatted log entry
+   */
+  private output(logEntry: LogEntry): void {
+    const output = process.env.NODE_ENV === 'production' 
+      ? JSON.stringify(logEntry)
+      : `[${logEntry.timestamp}] ${logEntry.level.toUpperCase()}: ${logEntry.message}${logEntry.data ? ` ${JSON.stringify(logEntry.data)}` : ''}`;
+    
+    console.log(output);
+  }
+
+  /**
+   * Logs an info message
+   * @param message Info message
+   * @param data Optional additional data
+   */
+  info(message: string, data?: unknown): void {
+    this.output(this.formatLog('info', message, data));
+  }
+
+  /**
+   * Logs a warning message
+   * @param message Warning message
+   * @param data Optional additional data
+   */
+  warn(message: string, data?: unknown): void {
+    this.output(this.formatLog('warn', message, data));
+  }
+
+  /**
+   * Logs an error message
+   * @param message Error message
+   * @param data Optional additional data (typically Error object)
+   */
+  error(message: string, data?: unknown): void {
+    this.output(this.formatLog('error', message, data));
+  }
+
+  /**
+   * Logs a debug message (only in development)
+   * @param message Debug message
+   * @param data Optional additional data
+   */
+  debug(message: string, data?: unknown): void {
+    if (process.env.NODE_ENV !== 'production') {
+      this.output(this.formatLog('debug', message, data));
+    }
+  }
 }
+
+/** Singleton logger instance */
+export const logger = new Logger();
