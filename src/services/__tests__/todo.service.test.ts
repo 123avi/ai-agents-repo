@@ -1,36 +1,27 @@
 import { TodoService } from '../todo.service';
-import { TodoRepository } from '../../repositories/todo.repository';
-import { Todo } from '../../models/todo.model';
-import { CreateTodoDTO, UpdateTodoDTO } from '../../dtos/todo.dto';
-import { AppError } from '../../utils/app-error';
+import { ITodoRepository } from '../../repositories/todo.repository.interface';
+import { CreateTodoDTO, UpdateTodoDTO } from '../../dto/todo.dto';
+import { AppError } from '../../errors/app.error';
+import { Todo } from '../../entities/todo.entity';
 
-// Mock the dependencies
-jest.mock('../../repositories/todo.repository');
-jest.mock('../../models/todo.model');
-jest.mock('../../dtos/todo.dto');
-jest.mock('../../utils/app-error');
-
-// Test data constants
-const TEST_USER_ALICE = 1001;
-const TEST_USER_BOB = 1002;
-const TEST_TODO_ID = 2001;
-const FORBIDDEN_STATUS_CODE = 403;
-const NOT_FOUND_STATUS_CODE = 404;
+// Mock repository
+const mockTodoRepository: jest.Mocked<ITodoRepository> = {
+  create: jest.fn(),
+  findById: jest.fn(),
+  findByUserId: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+};
 
 describe('TodoService', () => {
   let todoService: TodoService;
-  let mockTodoRepository: jest.Mocked<TodoRepository>;
+  const VALID_USER_ID = 1;
+  const OTHER_USER_ID = 2;
+  const VALID_TODO_ID = 1;
+  const NON_EXISTENT_TODO_ID = 999;
 
   beforeEach(() => {
-    // Verify imports exist by checking constructors
-    expect(TodoRepository).toBeDefined();
-    expect(Todo).toBeDefined();
-    expect(AppError).toBeDefined();
-    
-    mockTodoRepository = new TodoRepository() as jest.Mocked<TodoRepository>;
     todoService = new TodoService(mockTodoRepository);
-
-    // Reset all mocks
     jest.clearAllMocks();
   });
 
@@ -38,184 +29,324 @@ describe('TodoService', () => {
     const validCreateDTO: CreateTodoDTO = {
       title: 'Test Todo',
       description: 'Test Description',
-      completed: false
     };
 
-    it('should create todo with user association', async () => {
-      // AC-001: Test todo creation with user association
-      const expectedTodo = {
-        id: TEST_TODO_ID,
-        userId: TEST_USER_ALICE,
-        ...validCreateDTO
+    it('should create a todo with user association', async () => {
+      // Arrange
+      const expectedTodo: Todo = {
+        id: 1,
+        title: validCreateDTO.title,
+        description: validCreateDTO.description,
+        completed: false,
+        userId: VALID_USER_ID,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
-      
-      mockTodoRepository.create.mockResolvedValue(expectedTodo as Todo);
+      mockTodoRepository.create.mockResolvedValue(expectedTodo);
 
-      const result = await todoService.createTodo(TEST_USER_ALICE, validCreateDTO);
+      // Act
+      const result = await todoService.createTodo(validCreateDTO, VALID_USER_ID);
 
+      // Assert
       expect(mockTodoRepository.create).toHaveBeenCalledWith({
         ...validCreateDTO,
-        userId: TEST_USER_ALICE
+        userId: VALID_USER_ID,
       });
       expect(result).toEqual(expectedTodo);
     });
 
-    it('should throw error for invalid CreateTodoDTO data', async () => {
-      const invalidCreateDTO = {
-        title: '',
-        description: null,
-        completed: 'invalid'
-      } as any;
+    it('should handle repository errors during creation', async () => {
+      // Arrange
+      const dbError = new Error('Database connection failed');
+      mockTodoRepository.create.mockRejectedValue(dbError);
 
-      mockTodoRepository.create.mockRejectedValue(
-        new AppError('Validation failed: title is required', 400)
-      );
+      // Act & Assert
+      await expect(todoService.createTodo(validCreateDTO, VALID_USER_ID))
+        .rejects.toThrow('Database connection failed');
+      
+      expect(mockTodoRepository.create).toHaveBeenCalledWith({
+        ...validCreateDTO,
+        userId: VALID_USER_ID,
+      });
+    });
 
-      await expect(todoService.createTodo(TEST_USER_ALICE, invalidCreateDTO))
-        .rejects
-        .toThrow('Validation failed: title is required');
+    describe('DTO validation boundary tests', () => {
+      it('should handle extremely long titles', async () => {
+        // Arrange
+        const longTitle = 'a'.repeat(1000);
+        const longTitleDTO: CreateTodoDTO = {
+          title: longTitle,
+          description: 'Test Description',
+        };
+        const expectedTodo: Todo = {
+          id: 1,
+          title: longTitle,
+          description: 'Test Description',
+          completed: false,
+          userId: VALID_USER_ID,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        mockTodoRepository.create.mockResolvedValue(expectedTodo);
+
+        // Act
+        const result = await todoService.createTodo(longTitleDTO, VALID_USER_ID);
+
+        // Assert
+        expect(result.title).toBe(longTitle);
+        expect(mockTodoRepository.create).toHaveBeenCalledWith({
+          ...longTitleDTO,
+          userId: VALID_USER_ID,
+        });
+      });
+
+      it('should handle special characters in title and description', async () => {
+        // Arrange
+        const specialCharDTO: CreateTodoDTO = {
+          title: 'Todo with émojis 🚀 and symbols @#$%^&*()',
+          description: 'Description with quotes "double" and \'single\' and newlines\n\r',
+        };
+        const expectedTodo: Todo = {
+          id: 1,
+          title: specialCharDTO.title,
+          description: specialCharDTO.description,
+          completed: false,
+          userId: VALID_USER_ID,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        mockTodoRepository.create.mockResolvedValue(expectedTodo);
+
+        // Act
+        const result = await todoService.createTodo(specialCharDTO, VALID_USER_ID);
+
+        // Assert
+        expect(result).toEqual(expectedTodo);
+        expect(mockTodoRepository.create).toHaveBeenCalledWith({
+          ...specialCharDTO,
+          userId: VALID_USER_ID,
+        });
+      });
+
+      it('should handle empty strings in optional description', async () => {
+        // Arrange
+        const emptyDescDTO: CreateTodoDTO = {
+          title: 'Test Todo',
+          description: '',
+        };
+        const expectedTodo: Todo = {
+          id: 1,
+          title: 'Test Todo',
+          description: '',
+          completed: false,
+          userId: VALID_USER_ID,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        mockTodoRepository.create.mockResolvedValue(expectedTodo);
+
+        // Act
+        const result = await todoService.createTodo(emptyDescDTO, VALID_USER_ID);
+
+        // Assert
+        expect(result.description).toBe('');
+        expect(mockTodoRepository.create).toHaveBeenCalledWith({
+          ...emptyDescDTO,
+          userId: VALID_USER_ID,
+        });
+      });
     });
   });
 
-  describe('getTodosByUser', () => {
+  describe('getTodosByUserId', () => {
     it('should retrieve todos for specific user', async () => {
-      // AC-002: Test todo retrieval for specific user
-      const userTodos = [
-        { id: TEST_TODO_ID, userId: TEST_USER_ALICE, title: 'User 1 Todo', completed: false },
-        { id: TEST_TODO_ID + 1, userId: TEST_USER_ALICE, title: 'User 1 Todo 2', completed: true }
+      // Arrange
+      const expectedTodos: Todo[] = [
+        {
+          id: 1,
+          title: 'Todo 1',
+          description: 'Description 1',
+          completed: false,
+          userId: VALID_USER_ID,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 2,
+          title: 'Todo 2',
+          description: 'Description 2',
+          completed: true,
+          userId: VALID_USER_ID,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       ];
-      
-      mockTodoRepository.findByUserId.mockResolvedValue(userTodos as Todo[]);
+      mockTodoRepository.findByUserId.mockResolvedValue(expectedTodos);
 
-      const result = await todoService.getTodosByUser(TEST_USER_ALICE);
+      // Act
+      const result = await todoService.getTodosByUserId(VALID_USER_ID);
 
-      expect(mockTodoRepository.findByUserId).toHaveBeenCalledWith(TEST_USER_ALICE);
-      expect(result).toEqual(userTodos);
-      expect(result).toHaveLength(2);
+      // Assert
+      expect(mockTodoRepository.findByUserId).toHaveBeenCalledWith(VALID_USER_ID);
+      expect(result).toEqual(expectedTodos);
     });
 
-    it('should return empty array for user with no todos', async () => {
+    it('should return empty array when user has no todos', async () => {
+      // Arrange
       mockTodoRepository.findByUserId.mockResolvedValue([]);
 
-      const result = await todoService.getTodosByUser(TEST_USER_BOB);
+      // Act
+      const result = await todoService.getTodosByUserId(VALID_USER_ID);
 
+      // Assert
       expect(result).toEqual([]);
+      expect(mockTodoRepository.findByUserId).toHaveBeenCalledWith(VALID_USER_ID);
     });
   });
 
   describe('updateTodo', () => {
-    const updateDTO: UpdateTodoDTO = {
+    const validUpdateDTO: UpdateTodoDTO = {
       title: 'Updated Todo',
-      completed: true
+      description: 'Updated Description',
+      completed: true,
     };
 
-    it('should update todo with ownership validation', async () => {
-      // AC-003: Test todo update with ownership checks
-      const existingTodo = {
-        id: TEST_TODO_ID,
-        userId: TEST_USER_ALICE,
+    it('should update todo with ownership checks', async () => {
+      // Arrange
+      const existingTodo: Todo = {
+        id: VALID_TODO_ID,
         title: 'Original Todo',
-        completed: false
+        description: 'Original Description',
+        completed: false,
+        userId: VALID_USER_ID,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
-      
-      const updatedTodo = {
+      const updatedTodo: Todo = {
         ...existingTodo,
-        ...updateDTO
+        ...validUpdateDTO,
+        updatedAt: new Date(),
       };
+      mockTodoRepository.findById.mockResolvedValue(existingTodo);
+      mockTodoRepository.update.mockResolvedValue(updatedTodo);
 
-      mockTodoRepository.findById.mockResolvedValue(existingTodo as Todo);
-      mockTodoRepository.update.mockResolvedValue(updatedTodo as Todo);
+      // Act
+      const result = await todoService.updateTodo(VALID_TODO_ID, validUpdateDTO, VALID_USER_ID);
 
-      const result = await todoService.updateTodo(TEST_TODO_ID, TEST_USER_ALICE, updateDTO);
-
-      expect(mockTodoRepository.findById).toHaveBeenCalledWith(TEST_TODO_ID);
-      expect(mockTodoRepository.update).toHaveBeenCalledWith(TEST_TODO_ID, updateDTO);
+      // Assert
+      expect(mockTodoRepository.findById).toHaveBeenCalledWith(VALID_TODO_ID);
+      expect(mockTodoRepository.update).toHaveBeenCalledWith(VALID_TODO_ID, validUpdateDTO);
       expect(result).toEqual(updatedTodo);
     });
 
-    it('should throw error when user tries to update another users todo', async () => {
-      const todoOwnedByAlice = {
-        id: TEST_TODO_ID,
-        userId: TEST_USER_ALICE,
-        title: 'Alice Todo',
-        completed: false
+    it('should throw AppError when todo does not exist', async () => {
+      // Arrange
+      mockTodoRepository.findById.mockResolvedValue(null);
+
+      // Act & Assert
+      await expect(todoService.updateTodo(NON_EXISTENT_TODO_ID, validUpdateDTO, VALID_USER_ID))
+        .rejects.toThrow(AppError);
+      
+      const thrownError = await todoService.updateTodo(NON_EXISTENT_TODO_ID, validUpdateDTO, VALID_USER_ID)
+        .catch(error => error);
+      
+      expect(thrownError).toBeInstanceOf(AppError);
+      expect(thrownError.message).toBe('Todo not found');
+      expect(thrownError.statusCode).toBe(404);
+      expect(mockTodoRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw AppError when user does not own the todo', async () => {
+      // Arrange
+      const otherUserTodo: Todo = {
+        id: VALID_TODO_ID,
+        title: 'Other User Todo',
+        description: 'Other User Description',
+        completed: false,
+        userId: OTHER_USER_ID,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
+      mockTodoRepository.findById.mockResolvedValue(otherUserTodo);
 
-      mockTodoRepository.findById.mockResolvedValue(todoOwnedByAlice as Todo);
-
-      await expect(todoService.updateTodo(TEST_TODO_ID, TEST_USER_BOB, updateDTO))
-        .rejects
-        .toThrow(expect.objectContaining({
-          message: 'Access denied',
-          statusCode: FORBIDDEN_STATUS_CODE
-        }));
-
+      // Act & Assert
+      await expect(todoService.updateTodo(VALID_TODO_ID, validUpdateDTO, VALID_USER_ID))
+        .rejects.toThrow(AppError);
+      
+      const thrownError = await todoService.updateTodo(VALID_TODO_ID, validUpdateDTO, VALID_USER_ID)
+        .catch(error => error);
+      
+      expect(thrownError).toBeInstanceOf(AppError);
+      expect(thrownError.message).toBe('Unauthorized to update this todo');
+      expect(thrownError.statusCode).toBe(403);
       expect(mockTodoRepository.update).not.toHaveBeenCalled();
     });
   });
 
   describe('deleteTodo', () => {
-    it('should delete todo with ownership validation', async () => {
-      // AC-004: Test todo deletion with ownership checks
-      const todoToDelete = {
-        id: TEST_TODO_ID,
-        userId: TEST_USER_ALICE,
-        title: 'Todo to delete',
-        completed: false
+    it('should delete todo with ownership checks', async () => {
+      // Arrange
+      const existingTodo: Todo = {
+        id: VALID_TODO_ID,
+        title: 'Todo to Delete',
+        description: 'Description to Delete',
+        completed: false,
+        userId: VALID_USER_ID,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
-
-      mockTodoRepository.findById.mockResolvedValue(todoToDelete as Todo);
+      mockTodoRepository.findById.mockResolvedValue(existingTodo);
       mockTodoRepository.delete.mockResolvedValue(undefined);
 
-      await todoService.deleteTodo(TEST_TODO_ID, TEST_USER_ALICE);
+      // Act
+      await todoService.deleteTodo(VALID_TODO_ID, VALID_USER_ID);
 
-      expect(mockTodoRepository.findById).toHaveBeenCalledWith(TEST_TODO_ID);
-      expect(mockTodoRepository.delete).toHaveBeenCalledWith(TEST_TODO_ID);
+      // Assert
+      expect(mockTodoRepository.findById).toHaveBeenCalledWith(VALID_TODO_ID);
+      expect(mockTodoRepository.delete).toHaveBeenCalledWith(VALID_TODO_ID);
     });
 
-    it('should throw error when user tries to delete another users todo', async () => {
-      const todoOwnedByAlice = {
-        id: TEST_TODO_ID,
-        userId: TEST_USER_ALICE,
-        title: 'Alice Todo',
-        completed: false
-      };
+    it('should throw AppError when todo does not exist', async () => {
+      // Arrange
+      mockTodoRepository.findById.mockResolvedValue(null);
 
-      mockTodoRepository.findById.mockResolvedValue(todoOwnedByAlice as Todo);
-
-      await expect(todoService.deleteTodo(TEST_TODO_ID, TEST_USER_BOB))
-        .rejects
-        .toThrow(expect.objectContaining({
-          message: 'Access denied',
-          statusCode: FORBIDDEN_STATUS_CODE
-        }));
-
+      // Act & Assert
+      await expect(todoService.deleteTodo(NON_EXISTENT_TODO_ID, VALID_USER_ID))
+        .rejects.toThrow(AppError);
+      
+      const thrownError = await todoService.deleteTodo(NON_EXISTENT_TODO_ID, VALID_USER_ID)
+        .catch(error => error);
+      
+      expect(thrownError).toBeInstanceOf(AppError);
+      expect(thrownError.message).toBe('Todo not found');
+      expect(thrownError.statusCode).toBe(404);
       expect(mockTodoRepository.delete).not.toHaveBeenCalled();
     });
-  });
 
-  describe('error handling for non-existent todos', () => {
-    it('should throw error when trying to update non-existent todo', async () => {
-      // AC-005: Test error handling for non-existent todos
-      mockTodoRepository.findById.mockResolvedValue(null);
+    it('should throw AppError when user does not own the todo', async () => {
+      // Arrange
+      const otherUserTodo: Todo = {
+        id: VALID_TODO_ID,
+        title: 'Other User Todo',
+        description: 'Other User Description',
+        completed: false,
+        userId: OTHER_USER_ID,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      mockTodoRepository.findById.mockResolvedValue(otherUserTodo);
 
-      await expect(todoService.updateTodo(TEST_TODO_ID, TEST_USER_ALICE, { title: 'Updated' }))
-        .rejects
-        .toThrow(expect.objectContaining({
-          message: 'Todo not found',
-          statusCode: NOT_FOUND_STATUS_CODE
-        }));
-    });
-
-    it('should throw error when trying to delete non-existent todo', async () => {
-      mockTodoRepository.findById.mockResolvedValue(null);
-
-      await expect(todoService.deleteTodo(TEST_TODO_ID, TEST_USER_ALICE))
-        .rejects
-        .toThrow(expect.objectContaining({
-          message: 'Todo not found',
-          statusCode: NOT_FOUND_STATUS_CODE
-        }));
+      // Act & Assert
+      await expect(todoService.deleteTodo(VALID_TODO_ID, VALID_USER_ID))
+        .rejects.toThrow(AppError);
+      
+      const thrownError = await todoService.deleteTodo(VALID_TODO_ID, VALID_USER_ID)
+        .catch(error => error);
+      
+      expect(thrownError).toBeInstanceOf(AppError);
+      expect(thrownError.message).toBe('Unauthorized to delete this todo');
+      expect(thrownError.statusCode).toBe(403);
+      expect(mockTodoRepository.delete).not.toHaveBeenCalled();
     });
   });
 });
