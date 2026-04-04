@@ -1,74 +1,109 @@
-import { Request, Response, NextFunction } from 'express';
-import { AuthService } from '../services/authService';
-import { ValidationError } from '../errors/ValidationError';
-import { AuthenticationError } from '../errors/AuthenticationError';
-import { logger } from '../utils/logger';
+import { Request, Response } from 'express';
+import { AuthService } from '../services/AuthService';
+import { Logger } from '../utils/Logger';
+import { validateRegisterInput, validateLoginInput } from '../middleware/validation';
 
-/**
- * HTTP status codes for authentication responses
- */
-const HTTP_STATUS = {
-  OK: 200,
+const RESPONSE_CODES = {
+  SUCCESS: 200,
   CREATED: 201,
   BAD_REQUEST: 400,
-  UNAUTHORIZED: 401
+  UNAUTHORIZED: 401,
+  INTERNAL_ERROR: 500
+} as const;
+
+const ERROR_MESSAGES = {
+  INVALID_CREDENTIALS: 'Invalid email or password',
+  EMAIL_EXISTS: 'Email already exists',
+  REGISTRATION_FAILED: 'Registration failed',
+  LOGIN_FAILED: 'Login failed',
+  INTERNAL_ERROR: 'Internal server error'
 } as const;
 
 /**
- * Authentication controller handling user registration and login
+ * Controller for handling authentication-related HTTP requests.
+ * Provides endpoints for user registration and login.
  */
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  private authService: AuthService;
 
   /**
-   * Handles user registration requests
-   * @param req - Express request object containing email and password
-   * @param res - Express response object
-   * @param next - Express next function for error handling
+   * Creates an instance of AuthController.
+   * @param authService - The authentication service instance
    */
-  public register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  constructor(authService: AuthService) {
+    this.authService = authService;
+  }
+
+  /**
+   * Handles user registration requests.
+   * @param req - Express request object with email and password in body
+   * @param res - Express response object
+   * @returns Promise<Response> - 201 with user ID or 400/500 with error
+   */
+  async register(req: Request, res: Response): Promise<Response> {
     try {
+      const validation = validateRegisterInput(req.body);
+      if (!validation.isValid) {
+        Logger.warn('Registration validation failed', { errors: validation.errors });
+        return res.status(RESPONSE_CODES.BAD_REQUEST).json({ error: validation.errors.join(', ') });
+      }
+
       const { email, password } = req.body;
-      
       const userId = await this.authService.register(email, password);
       
-      res.status(HTTP_STATUS.CREATED).json({ id: userId });
-      logger.info(`User registered successfully with ID: ${userId}`);
+      Logger.info('User registered successfully', { userId, email });
+      return res.status(RESPONSE_CODES.CREATED).json({ id: userId });
     } catch (error) {
-      if (error instanceof ValidationError) {
-        res.status(HTTP_STATUS.BAD_REQUEST).json({ error: error.message });
-        return;
-      }
-      logger.error('Registration error:', error);
-      next(error);
+      return this.handleAuthError(error, res, 'Registration');
     }
-  };
+  }
 
   /**
-   * Handles user login requests
-   * @param req - Express request object containing email and password
+   * Handles user login requests.
+   * @param req - Express request object with email and password in body
    * @param res - Express response object
-   * @param next - Express next function for error handling
+   * @returns Promise<Response> - 200 with JWT token or 400/401/500 with error
    */
-  public login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  async login(req: Request, res: Response): Promise<Response> {
     try {
+      const validation = validateLoginInput(req.body);
+      if (!validation.isValid) {
+        Logger.warn('Login validation failed', { errors: validation.errors });
+        return res.status(RESPONSE_CODES.BAD_REQUEST).json({ error: validation.errors.join(', ') });
+      }
+
       const { email, password } = req.body;
-      
       const token = await this.authService.login(email, password);
       
-      res.status(HTTP_STATUS.OK).json({ token });
-      logger.info(`User logged in successfully: ${email}`);
+      Logger.info('User logged in successfully', { email });
+      return res.status(RESPONSE_CODES.SUCCESS).json({ token });
     } catch (error) {
-      if (error instanceof ValidationError) {
-        res.status(HTTP_STATUS.BAD_REQUEST).json({ error: error.message });
-        return;
-      }
-      if (error instanceof AuthenticationError) {
-        res.status(HTTP_STATUS.UNAUTHORIZED).json({ error: error.message });
-        return;
-      }
-      logger.error('Login error:', error);
-      next(error);
+      return this.handleAuthError(error, res, 'Login');
     }
-  };
+  }
+
+  /**
+   * Handles authentication-related errors and sends appropriate responses.
+   * @param error - The caught error
+   * @param res - Express response object
+   * @param operation - The operation that failed (Registration or Login)
+   * @returns Response with appropriate status code and error message
+   */
+  private handleAuthError(error: unknown, res: Response, operation: string): Response {
+    Logger.error(`${operation} error`, { error });
+
+    if (error instanceof Error) {
+      switch (error.message) {
+        case 'Email already exists':
+          return res.status(RESPONSE_CODES.BAD_REQUEST).json({ error: ERROR_MESSAGES.EMAIL_EXISTS });
+        case 'Invalid credentials':
+          return res.status(RESPONSE_CODES.UNAUTHORIZED).json({ error: ERROR_MESSAGES.INVALID_CREDENTIALS });
+        default:
+          break;
+      }
+    }
+
+    const errorMessage = operation === 'Registration' ? ERROR_MESSAGES.REGISTRATION_FAILED : ERROR_MESSAGES.LOGIN_FAILED;
+    return res.status(RESPONSE_CODES.INTERNAL_ERROR).json({ error: errorMessage });
+  }
 }
