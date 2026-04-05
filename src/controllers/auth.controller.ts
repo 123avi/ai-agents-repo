@@ -1,125 +1,89 @@
-/**
- * Authentication controller handling user login
- */
-
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { config } from '../config/index';
 import { getUserByEmail } from '../repositories/user.repository';
-import { logger } from '../utils/logger';
+import { User } from '../types/user.interface';
+import { AuthenticationError } from '../errors/auth.errors';
 
-interface LoginRequest {
-  email: string;
-  password: string;
-}
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
+const TOKEN_EXPIRY = '24h';
 
 /**
- * Validates user credentials against database
- * @param email - User email address
- * @param password - Plain text password
- * @returns User data if credentials are valid, null otherwise
+ * Handles user login authentication
+ * @param req - Express request object with email and password
+ * @param res - Express response object
  */
-async function validateCredentials(email: string, password: string) {
+export async function login(req: Request, res: Response): Promise<void> {
   try {
-    const user = await getUserByEmail(email);
-    if (!user) {
-      return null;
-    }
-
-    const isValidPassword = await bcrypt.compare(password, user.passwordHash);
-    return isValidPassword ? user : null;
+    const { email, password } = req.body;
+    
+    const user = await authenticateUser(email, password);
+    const tokenResponse = generateTokenResponse(user);
+    
+    res.status(200).json({
+      success: true,
+      data: tokenResponse
+    });
   } catch (error) {
-    logger.error('Database error during credential validation', { error });
-    throw new Error('Authentication service temporarily unavailable');
+    if (error instanceof AuthenticationError) {
+      res.status(error.statusCode).json({
+        success: false,
+        error: {
+          code: 'AUTHENTICATION_FAILED',
+          message: error.message
+        }
+      });
+    } else {
+      console.error('Login error:', error);
+      res.status(500).json({
+        success: false,
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error occurred'
+        }
+      });
+    }
   }
 }
 
 /**
- * Authenticates user and returns user data
+ * Authenticates user credentials against database
  * @param email - User email address
  * @param password - Plain text password
- * @returns User data if authentication successful
+ * @returns Promise<User> - Authenticated user data
+ * @throws AuthenticationError - When credentials are invalid
  */
-async function authenticateUser(email: string, password: string) {
-  const user = await validateCredentials(email, password);
+async function authenticateUser(email: string, password: string): Promise<User> {
+  const user = await getUserByEmail(email);
   
   if (!user) {
-    const error = new Error('Invalid credentials');
-    (error as any).status = 401;
-    throw error;
+    throw new AuthenticationError('Invalid credentials', 401);
   }
-
+  
+  const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+  
+  if (!isPasswordValid) {
+    throw new AuthenticationError('Invalid credentials', 401);
+  }
+  
   return user;
 }
 
 /**
  * Generates JWT token response for authenticated user
- * @param user - Authenticated user data
- * @returns Token response object
+ * @param user - Authenticated user object
+ * @returns Object containing JWT token and expiration
  */
-function generateTokenResponse(user: any) {
-  const token = jwt.sign(
-    { userId: user.id, email: user.email },
-    config.jwt.secret,
-    { expiresIn: config.jwt.expiresIn }
-  );
-
-  return {
-    success: true,
-    data: {
-      token,
-      user: {
-        id: user.id,
-        email: user.email
-      }
-    }
+function generateTokenResponse(user: User): { token: string; expires_in: string } {
+  const payload = {
+    user_id: user.id,
+    email: user.email
   };
-}
-
-/**
- * Handles POST /api/auth/login requests
- * @param req - Express request object
- * @param res - Express response object
- */
-export async function login(req: Request, res: Response): Promise<void> {
-  try {
-    const { email, password }: LoginRequest = req.body;
-
-    if (!email || !password) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'MISSING_CREDENTIALS',
-          message: 'Email and password are required'
-        }
-      });
-      return;
-    }
-
-    const user = await authenticateUser(email, password);
-    const response = generateTokenResponse(user);
-    
-    res.status(200).json(response);
-  } catch (error: any) {
-    if (error.status === 401) {
-      res.status(401).json({
-        success: false,
-        error: {
-          code: 'INVALID_CREDENTIALS',
-          message: error.message
-        }
-      });
-      return;
-    }
-
-    logger.error('Login error', { error });
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Authentication service temporarily unavailable'
-      }
-    });
-  }
+  
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+  
+  return {
+    token,
+    expires_in: TOKEN_EXPIRY
+  };
 }
