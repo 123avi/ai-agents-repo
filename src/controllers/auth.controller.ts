@@ -1,114 +1,125 @@
+/**
+ * Authentication controller handling user login
+ */
+
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { AuthService } from '../services/auth.service';
-import { validateLoginRequest } from '../validators/auth.validator';
-import { ApiError } from '../utils/errors';
+import { config } from '../config/index';
+import { getUserByEmail } from '../repositories/user.repository';
 import { logger } from '../utils/logger';
 
-// JWT expiration time (24 hours)
-const JWT_EXPIRES_IN = '24h';
-const JWT_SECRET = process.env.JWT_SECRET;
+interface LoginRequest {
+  email: string;
+  password: string;
+}
 
 /**
- * Authentication controller handling login and token generation
+ * Validates user credentials against database
+ * @param email - User email address
+ * @param password - Plain text password
+ * @returns User data if credentials are valid, null otherwise
  */
-export class AuthController {
-  private authService: AuthService;
+async function validateCredentials(email: string, password: string) {
+  try {
+    const user = await getUserByEmail(email);
+    if (!user) {
+      return null;
+    }
 
-  constructor(authService: AuthService) {
-    this.authService = authService;
+    const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+    return isValidPassword ? user : null;
+  } catch (error) {
+    logger.error('Database error during credential validation', { error });
+    throw new Error('Authentication service temporarily unavailable');
+  }
+}
+
+/**
+ * Authenticates user and returns user data
+ * @param email - User email address
+ * @param password - Plain text password
+ * @returns User data if authentication successful
+ */
+async function authenticateUser(email: string, password: string) {
+  const user = await validateCredentials(email, password);
+  
+  if (!user) {
+    const error = new Error('Invalid credentials');
+    (error as any).status = 401;
+    throw error;
   }
 
-  /**
-   * Handles user login request with credential validation
-   * @param req - Express request object with email/password
-   * @param res - Express response object
-   */
-  async login(req: Request, res: Response): Promise<void> {
-    try {
-      // Validate request body
-      const validationResult = validateLoginRequest(req.body);
-      if (!validationResult.isValid) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: validationResult.errors.join(', ')
-          }
-        });
-        return;
+  return user;
+}
+
+/**
+ * Generates JWT token response for authenticated user
+ * @param user - Authenticated user data
+ * @returns Token response object
+ */
+function generateTokenResponse(user: any) {
+  const token = jwt.sign(
+    { userId: user.id, email: user.email },
+    config.jwt.secret,
+    { expiresIn: config.jwt.expiresIn }
+  );
+
+  return {
+    success: true,
+    data: {
+      token,
+      user: {
+        id: user.id,
+        email: user.email
       }
+    }
+  };
+}
 
-      const { email, password } = req.body;
-      
-      // Find user by email
-      const user = await this.authService.findUserByEmail(email);
-      if (!user) {
-        res.status(401).json({
-          success: false,
-          error: {
-            code: 'INVALID_CREDENTIALS',
-            message: 'Invalid email or password'
-          }
-        });
-        return;
-      }
+/**
+ * Handles POST /api/auth/login requests
+ * @param req - Express request object
+ * @param res - Express response object
+ */
+export async function login(req: Request, res: Response): Promise<void> {
+  try {
+    const { email, password }: LoginRequest = req.body;
 
-      // Validate password against stored hash
-      const isValidPassword = await bcrypt.compare(password, user.password_hash);
-      if (!isValidPassword) {
-        res.status(401).json({
-          success: false,
-          error: {
-            code: 'INVALID_CREDENTIALS',
-            message: 'Invalid email or password'
-          }
-        });
-        return;
-      }
-
-      // Generate JWT token
-      const token = this.generateJwtToken(user.id, user.email);
-
-      res.status(200).json({
-        success: true,
-        data: {
-          token,
-          user: {
-            id: user.id,
-            email: user.email
-          }
-        }
-      });
-
-    } catch (error) {
-      logger.error('Login error:', error);
-      res.status(500).json({
+    if (!email || !password) {
+      res.status(400).json({
         success: false,
         error: {
-          code: 'INTERNAL_ERROR',
-          message: 'Internal server error'
+          code: 'MISSING_CREDENTIALS',
+          message: 'Email and password are required'
         }
       });
-    }
-  }
-
-  /**
-   * Generates JWT token with user payload and 24-hour expiration
-   * @param userId - User ID to include in token
-   * @param email - User email to include in token
-   * @returns JWT token string
-   */
-  private generateJwtToken(userId: number, email: string): string {
-    if (!JWT_SECRET) {
-      throw new ApiError('JWT_SECRET environment variable is not set', 500);
+      return;
     }
 
-    return jwt.sign(
-      { userId, email },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
-    );
+    const user = await authenticateUser(email, password);
+    const response = generateTokenResponse(user);
+    
+    res.status(200).json(response);
+  } catch (error: any) {
+    if (error.status === 401) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'INVALID_CREDENTIALS',
+          message: error.message
+        }
+      });
+      return;
+    }
+
+    logger.error('Login error', { error });
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Authentication service temporarily unavailable'
+      }
+    });
   }
 }
