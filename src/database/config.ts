@@ -1,95 +1,51 @@
-import { Pool } from 'pg';
+import { PoolConfig } from 'pg';
+
+const MIN_PORT = 1;
+const MAX_PORT = 65535;
+const DEFAULT_DATABASE_PORT = 5432;
+const DEFAULT_MAX_CONNECTIONS = 20;
+const DEFAULT_IDLE_TIMEOUT_MS = 10000;
+const DEFAULT_CONNECTION_TIMEOUT_MS = 2000;
 
 /**
- * Database configuration constants
+ * Validates that a port number is within valid range (1-65535)
+ * @param port - Port number to validate
+ * @returns True if port is valid, false otherwise
  */
-const DB_MIN_CONNECTIONS = 20;
-const DB_MAX_CONNECTIONS = 100;
-const DB_IDLE_TIMEOUT_MS = 30000;
-const DB_CONNECTION_TIMEOUT_MS = 2000;
-
-/**
- * Validates and extracts DATABASE_URL from environment
- * @throws {Error} If DATABASE_URL is not provided or empty
- */
-function validateDatabaseUrl(): string {
-  const connectionString = process.env.DATABASE_URL;
-  
-  if (!connectionString || connectionString.trim().length === 0) {
-    throw new Error('DATABASE_URL environment variable is required and cannot be empty');
-  }
-  
-  return connectionString.trim();
+function isValidPort(port: number): boolean {
+  return Number.isInteger(port) && port >= MIN_PORT && port <= MAX_PORT;
 }
 
 /**
- * Database configuration object with validated connection string
+ * Gets database configuration from environment variables with validation
+ * @returns PostgreSQL pool configuration object
+ * @throws Error if required environment variables are missing or invalid
  */
-export const DB_CONFIG = {
-  connectionString: validateDatabaseUrl(),
-  min: DB_MIN_CONNECTIONS,
-  max: DB_MAX_CONNECTIONS,
-  idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
-  connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS,
-};
+export function getDatabaseConfig(): PoolConfig {
+  const host = process.env.DB_HOST;
+  const portString = process.env.DB_PORT;
+  const database = process.env.DB_NAME;
+  const user = process.env.DB_USER;
+  const password = process.env.DB_PASSWORD;
 
-/**
- * Global connection pool instance
- */
-let connectionPool: Pool | null = null;
-
-/**
- * Gets or creates the database connection pool
- * @returns {Pool} PostgreSQL connection pool
- */
-export function getConnectionPool(): Pool {
-  if (!connectionPool) {
-    connectionPool = new Pool(DB_CONFIG);
-    
-    connectionPool.on('error', (err) => {
-      console.error('Database pool error:', err);
-    });
+  if (!host || !database || !user || !password) {
+    throw new Error('Missing required database environment variables: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD');
   }
-  
-  return connectionPool;
-}
 
-/**
- * Checks the health of database connections
- * @returns {Promise<boolean>} True if connection is healthy, false otherwise
- */
-export async function checkConnectionHealth(): Promise<boolean> {
-  const pool = getConnectionPool();
-  let client;
-  
-  try {
-    client = await pool.connect();
-    const result = await client.query('SELECT 1 as health_check');
-    return result.rows.length > 0 && result.rows[0].health_check === 1;
-  } catch (error) {
-    console.error('Database health check failed:', error);
-    return false;
-  } finally {
-    if (client) {
-      client.release();
-    }
+  // Parse and validate port
+  const port = portString ? parseInt(portString, 10) : DEFAULT_DATABASE_PORT;
+  if (!isValidPort(port)) {
+    throw new Error(`Invalid database port: ${portString}. Port must be an integer between ${MIN_PORT} and ${MAX_PORT}`);
   }
-}
 
-/**
- * Gracefully closes the connection pool
- * @returns {Promise<void>} Promise that resolves when pool is closed
- */
-export async function closeConnectionPool(): Promise<void> {
-  if (connectionPool) {
-    try {
-      await connectionPool.end();
-      console.log('Database connection pool closed successfully');
-    } catch (error) {
-      console.error('Error closing connection pool:', error);
-      throw error;
-    } finally {
-      connectionPool = null;
-    }
-  }
+  return {
+    host,
+    port,
+    database,
+    user,
+    password,
+    max: DEFAULT_MAX_CONNECTIONS,
+    idleTimeoutMillis: DEFAULT_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: DEFAULT_CONNECTION_TIMEOUT_MS
+  };
 }
