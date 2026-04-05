@@ -1,42 +1,47 @@
-/**
- * Database configuration module
- * Centralizes all database connection settings and environment variables
- */
+import { Pool } from 'pg';
+import { logger } from '../utils/logger';
 
-/** Minimum connections required by NFR */
-const MIN_CONNECTIONS = 20;
-
-/** Default maximum connections for connection pool */
-const DEFAULT_MAX_CONNECTIONS = 100;
-
-/** Default connection timeout in milliseconds */
-const DEFAULT_CONNECTION_TIMEOUT = 30000;
-
-/** Default idle timeout in milliseconds */
-const DEFAULT_IDLE_TIMEOUT = 10000;
+const DB_HOST = process.env.DB_HOST || 'localhost';
+const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);
+const DB_NAME = process.env.DB_NAME || 'todoapp';
+const DB_USER = process.env.DB_USER || 'postgres';
+const DB_PASSWORD = process.env.DB_PASSWORD || 'password';
+const MAX_POOL_SIZE = parseInt(process.env.DB_MAX_POOL_SIZE || '10', 10);
 
 /**
- * Database configuration object constructed from environment variables
- * Validates required environment variables and provides defaults
+ * PostgreSQL connection pool configuration
  */
-export const DB_CONFIG = {
-  connectionString: process.env.DATABASE_URL || '',
-  min: MIN_CONNECTIONS,
-  max: parseInt(process.env.DB_MAX_CONNECTIONS || DEFAULT_MAX_CONNECTIONS.toString(), 10),
-  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || DEFAULT_CONNECTION_TIMEOUT.toString(), 10),
-  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || DEFAULT_IDLE_TIMEOUT.toString(), 10),
-};
+export const pool = new Pool({
+  host: DB_HOST,
+  port: DB_PORT,
+  database: DB_NAME,
+  user: DB_USER,
+  password: DB_PASSWORD,
+  max: MAX_POOL_SIZE,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
 
 /**
- * Validates that all required database configuration is present
- * @throws {Error} If DATABASE_URL environment variable is missing
+ * Initializes database connection and handles connection events
  */
-export function validateDatabaseConfig(): void {
-  if (!DB_CONFIG.connectionString) {
-    throw new Error('DATABASE_URL environment variable is required');
+export async function initializeDatabase(): Promise<void> {
+  try {
+    // Test connection
+    const client = await pool.connect();
+    logger.info('Database connection established successfully');
+    client.release();
+  } catch (error) {
+    logger.error('Failed to connect to database', { error: error.message });
+    throw error;
   }
-  
-  if (DB_CONFIG.min < MIN_CONNECTIONS) {
-    throw new Error(`Minimum connections must be at least ${MIN_CONNECTIONS} per NFR requirements`);
-  }
+
+  // Handle pool events
+  pool.on('error', (error) => {
+    logger.error('Unexpected database pool error', { error: error.message });
+  });
+
+  pool.on('connect', () => {
+    logger.debug('New database client connected');
+  });
 }
