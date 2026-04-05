@@ -1,23 +1,17 @@
 import { Router } from 'express';
-import { AuthController } from '../controllers/auth.controller';
-import { AuthService } from '../services/auth.service';
-import { UserRepository } from '../repositories/user.repository';
-import { DatabaseConnection } from '../config/database';
-
-// Initialize dependencies
-const userRepository = new UserRepository(DatabaseConnection.getInstance());
-const authService = new AuthService(userRepository);
-const authController = new AuthController(authService);
+import { login } from '../controllers/auth.controller';
+import { validateLoginRequest } from '../middleware/validation.middleware';
 
 /**
- * Authentication routes configuration
+ * Authentication routes
+ * Handles user authentication endpoints
  */
-const authRouter = Router();
+const router = Router();
 
 /**
- * POST /api/auth/login - User login endpoint
- * Accepts email and password, returns JWT token for valid credentials
+ * POST /api/auth/login
+ * Authenticates user with email and password
  */
-authRouter.post('/login', (req, res) => authController.login(req, res));
+router.post('/login', validateLoginRequest, login);
 
-export { authRouter };
+export default router;
