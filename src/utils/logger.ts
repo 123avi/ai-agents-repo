@@ -1,44 +1,31 @@
 /**
- * Simple logger interface for database and health check logging
+ * Simple logger interface for database operations
  */
-interface Logger {
-  info(message: string, ...args: any[]): void;
-  warn(message: string, ...args: any[]): void;
-  error(message: string, ...args: any[]): void;
-}
-
-/**
- * Basic console logger implementation
- * In production, this would be replaced with a proper logging library
- */
-class ConsoleLogger implements Logger {
+export const logger = {
   /**
    * Logs info level messages
-   * @param message Log message
-   * @param args Additional arguments
+   * @param message - Log message
+   * @param meta - Optional metadata
    */
-  info(message: string, ...args: any[]): void {
-    console.log(`[INFO] ${new Date().toISOString()} - ${message}`, ...args);
-  }
+  info: (message: string, meta?: any) => {
+    console.log(`[INFO] ${new Date().toISOString()}: ${message}`, meta || '');
+  },
 
   /**
    * Logs warning level messages
-   * @param message Log message
-   * @param args Additional arguments
+   * @param message - Log message
+   * @param meta - Optional metadata
    */
-  warn(message: string, ...args: any[]): void {
-    console.warn(`[WARN] ${new Date().toISOString()} - ${message}`, ...args);
-  }
+  warn: (message: string, meta?: any) => {
+    console.warn(`[WARN] ${new Date().toISOString()}: ${message}`, meta || '');
+  },
 
   /**
    * Logs error level messages
-   * @param message Log message
-   * @param args Additional arguments
+   * @param message - Log message
+   * @param meta - Optional metadata
    */
-  error(message: string, ...args: any[]): void {
-    console.error(`[ERROR] ${new Date().toISOString()} - ${message}`, ...args);
+  error: (message: string, meta?: any) => {
+    console.error(`[ERROR] ${new Date().toISOString()}: ${message}`, meta || '');
   }
-}
-
-// Export singleton logger instance
-export const logger: Logger = new ConsoleLogger();
+};
