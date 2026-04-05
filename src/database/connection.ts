@@ -1,113 +1,142 @@
 import { Pool, PoolConfig } from 'pg';
-import { logger } from '../utils/logger';
+import { config } from 'dotenv';
 
-/** Database connection configuration constants */
-const DB_CONFIG = {
-  MIN_CONNECTIONS: 20,
-  MAX_CONNECTIONS: 50,
-  CONNECTION_TIMEOUT: 30000,
-  IDLE_TIMEOUT: 30000,
-  HEALTH_CHECK_INTERVAL: 30000
-} as const;
+config();
 
-/** PostgreSQL connection pool instance */
-let pool: Pool | null = null;
+// Constants
+const DEFAULT_MAX_CONNECTIONS = 10;
+const DEFAULT_IDLE_TIMEOUT_MS = 10000;
+const DEFAULT_CONNECTION_TIMEOUT_MS = 5000;
+const HEALTH_CHECK_QUERY = 'SELECT 1';
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 1000;
 
 /**
- * Creates and configures a PostgreSQL connection pool
- * @returns {Pool} Configured connection pool
- * @throws {Error} If DATABASE_URL environment variable is not set
+ * Validates required environment variables for database connection
+ * @throws {Error} If any required environment variable is missing
  */
-export function createConnectionPool(): Pool {
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL environment variable is required');
-  }
-
-  const config: PoolConfig = {
-    connectionString: process.env.DATABASE_URL,
-    min: DB_CONFIG.MIN_CONNECTIONS,
-    max: DB_CONFIG.MAX_CONNECTIONS,
-    connectionTimeoutMillis: DB_CONFIG.CONNECTION_TIMEOUT,
-    idleTimeoutMillis: DB_CONFIG.IDLE_TIMEOUT,
-    allowExitOnIdle: true
+function validateDatabaseEnvironment(): void {
+  const requiredVars = {
+    DB_HOST: process.env.DB_HOST,
+    DB_NAME: process.env.DB_NAME,
+    DB_USER: process.env.DB_USER,
+    DB_PASSWORD: process.env.DB_PASSWORD
   };
 
-  pool = new Pool(config);
+  const missingVars = Object.entries(requiredVars)
+    .filter(([key, value]) => !value)
+    .map(([key]) => key);
 
-  // Handle pool errors
-  pool.on('error', (err) => {
-    logger.error('Unexpected error on idle client', err);
-  });
-
-  logger.info('Database connection pool created', {
-    minConnections: DB_CONFIG.MIN_CONNECTIONS,
-    maxConnections: DB_CONFIG.MAX_CONNECTIONS
-  });
-
-  return pool;
-}
-
-/**
- * Gets the existing connection pool instance
- * @returns {Pool} The connection pool instance
- * @throws {Error} If pool is not initialized
- */
-export function getConnectionPool(): Pool {
-  if (!pool) {
-    throw new Error('Connection pool not initialized. Call createConnectionPool() first.');
+  if (missingVars.length > 0) {
+    throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
   }
-  return pool;
+}
+
+// Validate environment variables at module initialization
+validateDatabaseEnvironment();
+
+/**
+ * Creates PostgreSQL connection pool configuration
+ * @returns {PoolConfig} Pool configuration object
+ */
+function createPoolConfig(): PoolConfig {
+  const sslRejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false';
+  
+  return {
+    host: process.env.DB_HOST!,
+    port: parseInt(process.env.DB_PORT || '5432', 10),
+    database: process.env.DB_NAME!,
+    user: process.env.DB_USER!,
+    password: process.env.DB_PASSWORD!,
+    max: parseInt(process.env.DB_MAX_CONNECTIONS || DEFAULT_MAX_CONNECTIONS.toString(), 10),
+    idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || DEFAULT_IDLE_TIMEOUT_MS.toString(), 10),
+    connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || DEFAULT_CONNECTION_TIMEOUT_MS.toString(), 10),
+    ssl: process.env.NODE_ENV === 'production' ? {
+      rejectUnauthorized: sslRejectUnauthorized
+    } : false
+  };
+}
+
+// Create connection pool
+const pool = new Pool(createPoolConfig());
+
+/**
+ * Executes a database query with parameters
+ * @template T - Expected result type
+ * @param {string} query - SQL query string
+ * @param {unknown[]} params - Query parameters
+ * @returns {Promise<T[]>} Query results
+ * @throws {Error} Database connection or query execution error
+ */
+export async function executeQuery<T = any>(query: string, params: unknown[] = []): Promise<T[]> {
+  const client = await pool.connect();
+  
+  try {
+    const result = await client.query(query, params);
+    return result.rows;
+  } catch (error) {
+    console.error('Database query error:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**
- * Performs a health check on the database connection
- * @returns {Promise<boolean>} True if connection is healthy, false otherwise
+ * Performs database health check with retry logic
+ * @returns {Promise<boolean>} True if database is healthy
  */
-export async function checkConnectionHealth(): Promise<boolean> {
-  try {
-    if (!pool) {
-      logger.warn('Connection pool not initialized for health check');
-      return false;
-    }
-
-    const client = await pool.connect();
+export async function healthCheck(): Promise<boolean> {
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
     try {
-      const result = await client.query('SELECT 1 as healthy');
-      const isHealthy = result.rows[0]?.healthy === 1;
+      await executeQuery(HEALTH_CHECK_QUERY);
+      return true;
+    } catch (error) {
+      console.error(`Health check attempt ${attempt} failed:`, error);
       
-      if (isHealthy) {
-        logger.debug('Database health check passed');
-      } else {
-        logger.warn('Database health check returned unexpected result');
+      if (attempt < MAX_RETRY_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * attempt));
       }
-      
-      return isHealthy;
-    } finally {
-      client.release();
     }
-  } catch (error) {
-    logger.error('Database health check failed', error);
-    return false;
   }
+  
+  return false;
 }
 
 /**
- * Gracefully shuts down the connection pool
- * @returns {Promise<void>} Promise that resolves when shutdown is complete
+ * Gracefully closes all database connections
+ * @returns {Promise<void>}
  */
-export async function closeConnectionPool(): Promise<void> {
-  if (!pool) {
-    logger.warn('Attempted to close non-existent connection pool');
-    return;
-  }
-
+export async function closePool(): Promise<void> {
   try {
-    logger.info('Shutting down database connection pool...');
     await pool.end();
-    pool = null;
-    logger.info('Database connection pool closed successfully');
+    console.log('Database pool closed successfully');
   } catch (error) {
-    logger.error('Error closing database connection pool', error);
+    console.error('Error closing database pool:', error);
     throw error;
   }
 }
+
+// Graceful shutdown handlers with error handling
+function setupGracefulShutdown(): void {
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+  
+  signals.forEach(signal => {
+    process.on(signal, async () => {
+      try {
+        console.log(`Received ${signal}, closing database connections...`);
+        await closePool();
+        process.exit(0);
+      } catch (error) {
+        console.error('Error during graceful shutdown:', error);
+        process.exit(1);
+      }
+    });
+  });
+}
+
+// Initialize graceful shutdown
+setupGracefulShutdown();
+
+export { pool };
+export default pool;
