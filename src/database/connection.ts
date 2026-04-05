@@ -1,113 +1,102 @@
-import { Pool, PoolConfig } from 'pg';
+import { Pool, PoolConfig, Client } from 'pg';
 import { logger } from '../utils/logger';
 
-/** Database connection configuration constants */
-const DB_CONFIG = {
-  MIN_CONNECTIONS: 20,
-  MAX_CONNECTIONS: 50,
-  CONNECTION_TIMEOUT: 30000,
-  IDLE_TIMEOUT: 30000,
-  HEALTH_CHECK_INTERVAL: 30000
-} as const;
-
-/** PostgreSQL connection pool instance */
-let pool: Pool | null = null;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+const CONNECTION_TIMEOUT_MS = 5000;
 
 /**
- * Creates and configures a PostgreSQL connection pool
- * @returns {Pool} Configured connection pool
- * @throws {Error} If DATABASE_URL environment variable is not set
+ * Database connection pool manager with retry logic and health checks
  */
-export function createConnectionPool(): Pool {
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL environment variable is required');
+export class DatabaseConnection {
+  private pool: Pool;
+  private isConnected: boolean = false;
+
+  constructor(private config: PoolConfig) {
+    this.pool = new Pool({
+      ...config,
+      connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+      idleTimeoutMillis: 30000,
+      max: 10,
+      min: 2
+    });
+
+    this.pool.on('error', (err) => {
+      logger.error('Database pool error:', err);
+      this.isConnected = false;
+    });
   }
 
-  const config: PoolConfig = {
-    connectionString: process.env.DATABASE_URL,
-    min: DB_CONFIG.MIN_CONNECTIONS,
-    max: DB_CONFIG.MAX_CONNECTIONS,
-    connectionTimeoutMillis: DB_CONFIG.CONNECTION_TIMEOUT,
-    idleTimeoutMillis: DB_CONFIG.IDLE_TIMEOUT,
-    allowExitOnIdle: true
-  };
-
-  pool = new Pool(config);
-
-  // Handle pool errors
-  pool.on('error', (err) => {
-    logger.error('Unexpected error on idle client', err);
-  });
-
-  logger.info('Database connection pool created', {
-    minConnections: DB_CONFIG.MIN_CONNECTIONS,
-    maxConnections: DB_CONFIG.MAX_CONNECTIONS
-  });
-
-  return pool;
-}
-
-/**
- * Gets the existing connection pool instance
- * @returns {Pool} The connection pool instance
- * @throws {Error} If pool is not initialized
- */
-export function getConnectionPool(): Pool {
-  if (!pool) {
-    throw new Error('Connection pool not initialized. Call createConnectionPool() first.');
-  }
-  return pool;
-}
-
-/**
- * Performs a health check on the database connection
- * @returns {Promise<boolean>} True if connection is healthy, false otherwise
- */
-export async function checkConnectionHealth(): Promise<boolean> {
-  try {
-    if (!pool) {
-      logger.warn('Connection pool not initialized for health check');
-      return false;
-    }
-
-    const client = await pool.connect();
-    try {
-      const result = await client.query('SELECT 1 as healthy');
-      const isHealthy = result.rows[0]?.healthy === 1;
-      
-      if (isHealthy) {
-        logger.debug('Database health check passed');
-      } else {
-        logger.warn('Database health check returned unexpected result');
+  /**
+   * Establishes connection to the database with retry logic
+   */
+  async connect(): Promise<void> {
+    let attempt = 0;
+    while (attempt < MAX_RETRIES) {
+      try {
+        const client = await this.pool.connect();
+        await client.query('SELECT 1');
+        client.release();
+        this.isConnected = true;
+        logger.info('Database connection established');
+        return;
+      } catch (error) {
+        attempt++;
+        logger.error(`Connection attempt ${attempt} failed:`, error);
+        if (attempt < MAX_RETRIES) {
+          await this.delay(RETRY_DELAY_MS * attempt);
+        } else {
+          throw error;
+        }
       }
-      
-      return isHealthy;
+    }
+  }
+
+  /**
+   * Gets a client from the pool
+   */
+  async getClient(): Promise<Client> {
+    if (!this.isConnected) {
+      throw new Error('Database not connected');
+    }
+    return this.pool.connect();
+  }
+
+  /**
+   * Executes a query with automatic client management
+   */
+  async query(text: string, params?: any[]): Promise<any> {
+    const client = await this.getClient();
+    try {
+      return await client.query(text, params);
     } finally {
       client.release();
     }
-  } catch (error) {
-    logger.error('Database health check failed', error);
-    return false;
-  }
-}
-
-/**
- * Gracefully shuts down the connection pool
- * @returns {Promise<void>} Promise that resolves when shutdown is complete
- */
-export async function closeConnectionPool(): Promise<void> {
-  if (!pool) {
-    logger.warn('Attempted to close non-existent connection pool');
-    return;
   }
 
-  try {
-    logger.info('Shutting down database connection pool...');
-    await pool.end();
-    pool = null;
-    logger.info('Database connection pool closed successfully');
-  } catch (error) {
-    logger.error('Error closing database connection pool', error);
-    throw error;
+  /**
+   * Closes all connections and shuts down the pool
+   */
+  async close(): Promise<void> {
+    await this.pool.end();
+    this.isConnected = false;
+    logger.info('Database connection closed');
+  }
+
+  /**
+   * Checks if the database is healthy and connected
+   */
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.query('SELECT 1');
+      return true;
+    } catch (error) {
+      logger.error('Database health check failed:', error);
+      return false;
+    }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
