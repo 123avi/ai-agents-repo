@@ -1,117 +1,92 @@
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const app = require('../../src/app');
-const db = require('../../src/config/database');
-const bcrypt = require('bcrypt');
+const { createTestUser, cleanupTestUser, setupTestDatabase } = require('../utils/testHelpers');
 
-/**
- * Integration tests for user login endpoint
- * Tests authentication flow and JWT token generation
- */
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required for tests');
+}
+
 describe('POST /api/auth/login', () => {
-  let testUser;
-  const TEST_USER_EMAIL = 'test@example.com';
-  const TEST_USER_PASSWORD = 'testPassword123';
-  const INVALID_PASSWORD = 'wrongPassword';
-  const NON_EXISTENT_EMAIL = 'nonexistent@example.com';
-  const JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
-  const EXPECTED_TOKEN_EXPIRY = 24 * 60 * 60; // 24 hours in seconds
+  const TEST_USER_EMAIL = 'testuser@example.com';
+  const TEST_USER_PASSWORD = 'TestPass123!';
+  let testUserId;
 
   beforeAll(async () => {
     await setupTestDatabase();
-  });
-
-  beforeEach(async () => {
-    testUser = await createTestUser();
-  });
-
-  afterEach(async () => {
-    await cleanupTestUser();
+    testUserId = await createTestUser(TEST_USER_EMAIL, TEST_USER_PASSWORD);
   });
 
   afterAll(async () => {
-    await db.end();
+    await cleanupTestUser(testUserId);
   });
 
-  /**
-   * AC-001: Test successful login returns 200 with JWT token
-   */
-  describe('successful login', () => {
-    it('should return 200 status with JWT token for valid credentials', async () => {
+  describe('AC-001: Test successful login returns 200 with JWT token', () => {
+    it('should return 200 and JWT token for valid credentials', async () => {
       const response = await request(app)
         .post('/api/auth/login')
         .send({
           email: TEST_USER_EMAIL,
           password: TEST_USER_PASSWORD
-        });
+        })
+        .expect(200);
 
-      expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(response.body.data).toHaveProperty('token');
-      expect(response.body.data.token).toBeTruthy();
+      expect(response.body.data.token).toBeDefined();
+      expect(typeof response.body.data.token).toBe('string');
     });
   });
 
-  /**
-   * AC-002: Test invalid credentials return 401 status
-   */
-  describe('invalid credentials', () => {
+  describe('AC-002: Test invalid credentials return 401 status', () => {
     it('should return 401 for wrong password', async () => {
       const response = await request(app)
         .post('/api/auth/login')
         .send({
           email: TEST_USER_EMAIL,
-          password: INVALID_PASSWORD
-        });
+          password: 'WrongPassword123!'
+        })
+        .expect(401);
 
-      expect(response.status).toBe(401);
       expect(response.body.success).toBe(false);
       expect(response.body.error.code).toBe('INVALID_CREDENTIALS');
     });
   });
 
-  /**
-   * AC-003: Test non-existent user returns 401 status
-   */
-  describe('non-existent user', () => {
+  describe('AC-003: Test non-existent user returns 401 status', () => {
     it('should return 401 for non-existent email', async () => {
       const response = await request(app)
         .post('/api/auth/login')
         .send({
-          email: NON_EXISTENT_EMAIL,
-          password: TEST_USER_PASSWORD
-        });
+          email: 'nonexistent@example.com',
+          password: 'SomePassword123!'
+        })
+        .expect(401);
 
-      expect(response.status).toBe(401);
       expect(response.body.success).toBe(false);
       expect(response.body.error.code).toBe('INVALID_CREDENTIALS');
     });
   });
 
-  /**
-   * AC-004: Verify JWT token contains correct user ID
-   */
-  describe('JWT token validation', () => {
-    it('should contain correct user ID in JWT payload', async () => {
+  describe('AC-004: Verify JWT token contains correct user ID', () => {
+    it('should return JWT token with correct user ID in payload', async () => {
       const response = await request(app)
         .post('/api/auth/login')
         .send({
           email: TEST_USER_EMAIL,
           password: TEST_USER_PASSWORD
-        });
+        })
+        .expect(200);
 
       const token = response.body.data.token;
       const decoded = jwt.verify(token, JWT_SECRET);
       
-      expect(decoded.userId).toBe(testUser.id);
+      expect(decoded.userId).toBe(testUserId);
       expect(decoded.email).toBe(TEST_USER_EMAIL);
     });
   });
 
-  /**
-   * AC-005: Test token expiration is set correctly
-   */
-  describe('token expiration', () => {
+  describe('AC-005: Test token expiration is set correctly', () => {
     it('should set token expiration to 24 hours', async () => {
       const beforeLogin = Math.floor(Date.now() / 1000);
       
@@ -120,57 +95,18 @@ describe('POST /api/auth/login', () => {
         .send({
           email: TEST_USER_EMAIL,
           password: TEST_USER_PASSWORD
-        });
+        })
+        .expect(200);
 
       const token = response.body.data.token;
       const decoded = jwt.verify(token, JWT_SECRET);
-      const expectedExpiry = beforeLogin + EXPECTED_TOKEN_EXPIRY;
       
-      expect(decoded.exp).toBeGreaterThanOrEqual(expectedExpiry);
-      expect(decoded.exp).toBeLessThanOrEqual(expectedExpiry + 60); // Allow 60s variance
+      const expectedExpiration = beforeLogin + (24 * 60 * 60); // 24 hours
+      const actualExpiration = decoded.exp;
+      
+      // Allow 5 second tolerance for test execution time
+      expect(actualExpiration).toBeGreaterThanOrEqual(expectedExpiration - 5);
+      expect(actualExpiration).toBeLessThanOrEqual(expectedExpiration + 5);
     });
   });
-
-  /**
-   * Creates a test user in the database
-   * @returns {Promise<Object>} Created user object
-   */
-  async function createTestUser() {
-    const hashedPassword = await bcrypt.hash(TEST_USER_PASSWORD, 12);
-    const query = `
-      INSERT INTO users (email, password, created_at, updated_at)
-      VALUES ($1, $2, NOW(), NOW())
-      RETURNING id, email
-    `;
-    
-    const result = await db.query(query, [TEST_USER_EMAIL, hashedPassword]);
-    return result.rows[0];
-  }
-
-  /**
-   * Removes test user from database
-   */
-  async function cleanupTestUser() {
-    if (testUser) {
-      await db.query('DELETE FROM users WHERE id = $1', [testUser.id]);
-      testUser = null;
-    }
-  }
-
-  /**
-   * Sets up test database connection and ensures tables exist
-   */
-  async function setupTestDatabase() {
-    // Ensure users table exists for tests
-    const createTableQuery = `
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `;
-    await db.query(createTableQuery);
-  }
 });
