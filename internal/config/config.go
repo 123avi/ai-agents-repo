@@ -1,40 +1,48 @@
 package config
 
 import (
+	"fmt"
 	"os"
 )
 
-// Configuration constants
 const (
+	// DEFAULT_PORT is the default port for the HTTP server
 	DEFAULT_PORT = "8080"
-	DEFAULT_HOST = "localhost"
-	DEFAULT_DATABASE_URL = "postgres://user:password@localhost/todoapi?sslmode=disable"
-	DEFAULT_JWT_SECRET = "your-secret-key"
 )
 
 /**
- * Config holds all application configuration values.
+ * Config holds all configuration values for the application.
  */
 type Config struct {
-	ServerAddress string
-	DatabaseURL   string
-	JWTSecret     string
+	Port        string
+	JWTSecret   string
+	DatabaseURL string
 }
 
 /**
- * Load reads configuration from environment variables with fallback to defaults.
- * Returns a Config struct with all necessary application settings.
+ * Load reads configuration from environment variables.
+ * Returns error if required environment variables are missing.
  */
-func Load() *Config {
-	return &Config{
-		ServerAddress: getEnv("SERVER_ADDRESS", DEFAULT_HOST+":"+DEFAULT_PORT),
-		DatabaseURL:   getEnv("DATABASE_URL", DEFAULT_DATABASE_URL),
-		JWTSecret:     getEnv("JWT_SECRET", DEFAULT_JWT_SECRET),
+func Load() (*Config, error) {
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if jwtSecret == "" {
+		return nil, fmt.Errorf("JWT_SECRET environment variable is required")
 	}
+
+	databaseURL := getEnv("DATABASE_URL", "")
+	if databaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL environment variable is required")
+	}
+
+	return &Config{
+		Port:        getEnv("PORT", DEFAULT_PORT),
+		JWTSecret:   jwtSecret,
+		DatabaseURL: databaseURL,
+	}, nil
 }
 
 /**
- * getEnv retrieves an environment variable or returns a default value if not set.
+ * getEnv retrieves environment variable value with optional default.
  */
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
