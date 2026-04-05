@@ -1,74 +1,92 @@
-# AI Agent Pipeline
+# Personal To-Do List Management System API
 
-This repository is managed by the AI Agent Pipeline.
-## How to run it locally
-### Step 1 — Clone your repository
-```
-git clone [https://github.com/[your-username]/[your-repo]](https://github.com/123avi/ai-agents-repo).git
-cd ai-agents-repo
-```
-### Step 2 — Install dependencies
-```
-bash
-npm install
-```
-### Step 3 — Set up PostgreSQL
-You need a running PostgreSQL database. The easiest way on Windows is Docker:
-```
-bash
-docker run --name todo-db \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=todo_db \
-  -p 5432:5432 \
-  -d postgres:15
-```
-### Step 4 — Create a .env file
-The generated code expects these environment variables:
-```
-PORT=3000
-NODE_ENV=development
-DATABASE_URL=postgresql://postgres:password@localhost:5432/todo_db
-JWT_SECRET=my-super-secret-key-change-in-production
-CORS_ORIGIN=http://localhost:3000
-```
-### Step 5 — Run migrations (if they exist)
-```
-bash
-npm run migrate
-```
- or
-```
-npm run db:migrate
-```
-### Step 6 — Start the server
+A RESTful API service for managing personal to-do items with user authentication and secure data persistence.
+
+## Features
+
+- User registration and authentication
+- JWT-based security
+- CRUD operations for to-do items
+- PostgreSQL data persistence
+- Rate limiting and security middleware
+- TypeScript implementation
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js >= 18.0.0
+- PostgreSQL database
+- npm or yarn package manager
+
+### Installation
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+4. Build the project:
+   ```bash
+   npm run build
+   ```
+
+5. Start the server:
+   ```bash
+   npm start
+   ```
+
+### Development
+
+For development with hot reload:
 ```bash
 npm run dev
 ```
- or
-```npm start```
-### Step 7 — Test the API
-Use any API client. Here are the endpoints that should exist:
-```bash
-# Health check
-curl http://localhost:3000/health
 
-# Register a user
-curl -X POST http://localhost:3000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email": "test@example.com", "password": "password123"}'
+### Scripts
 
-# Login
-curl -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "test@example.com", "password": "password123"}'
+- `npm run build` - Compile TypeScript to JavaScript
+- `npm start` - Start the production server
+- `npm run dev` - Start development server with hot reload
+- `npm run clean` - Remove build directory
+- `npm run typecheck` - Run TypeScript type checking
 
-# Create a todo (use token from login)
-curl -X POST http://localhost:3000/api/todos \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{"title": "My first todo", "status": "open"}'
+## Project Structure
 
-# Get all todos
-curl http://localhost:3000/api/todos \
-  -H "Authorization: Bearer YOUR_TOKEN"
 ```
+src/
+├── config/          # Configuration management
+├── controllers/     # Request handlers
+├── middleware/      # Express middleware
+├── repositories/    # Data access layer
+├── services/        # Business logic layer
+├── types/          # TypeScript type definitions
+├── utils/          # Utility functions
+├── validation/     # Request validation schemas
+└── index.ts        # Application entry point
+```
+
+## Environment Variables
+
+See `.env.example` for required environment variables.
+
+## Health Check
+
+The API provides a health check endpoint:
+- `GET /health` - Returns server status
+
+## Security Features
+
+- Helmet.js for security headers
+- CORS configuration
+- Rate limiting
+- JWT authentication
+- Password hashing with bcrypt
+- Input validation
