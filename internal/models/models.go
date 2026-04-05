@@ -6,13 +6,9 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	// TodoStatus constants
-	STATUS_OPEN = "open"
-	STATUS_DONE = "done"
-)
-
-// User represents a user account in the system
+/**
+ * User represents a user account in the system.
+ */
 type User struct {
 	ID           uuid.UUID `json:"id" db:"id"`
 	Email        string    `json:"email" db:"email"`
@@ -21,7 +17,9 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// TodoItem represents a todo item in the system
+/**
+ * TodoItem represents a todo item in the system.
+ */
 type TodoItem struct {
 	ID          uuid.UUID  `json:"id" db:"id"`
 	UserID      uuid.UUID  `json:"user_id" db:"user_id"`
@@ -33,41 +31,45 @@ type TodoItem struct {
 	UpdatedAt   time.Time  `json:"updated_at" db:"updated_at"`
 }
 
-// CreateUserRequest represents the request body for user registration
-type CreateUserRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=8"`
+/**
+ * RegisterRequest represents the request body for user registration.
+ */
+type RegisterRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
-// LoginRequest represents the request body for user authentication
+/**
+ * LoginRequest represents the request body for user login.
+ */
 type LoginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
-// CreateTodoRequest represents the request body for creating a todo item
+/**
+ * CreateTodoRequest represents the request body for creating a todo item.
+ */
 type CreateTodoRequest struct {
-	Title       string     `json:"title" validate:"required,max=200"`
+	Title       string     `json:"title"`
 	Description *string    `json:"description"`
 	DueDate     *time.Time `json:"due_date"`
 }
 
-// UpdateTodoRequest represents the request body for updating a todo item
+/**
+ * UpdateTodoRequest represents the request body for updating a todo item.
+ */
 type UpdateTodoRequest struct {
-	Title       *string    `json:"title" validate:"omitempty,max=200"`
+	Title       *string    `json:"title"`
 	Description *string    `json:"description"`
 	DueDate     *time.Time `json:"due_date"`
-	Status      *string    `json:"status" validate:"omitempty,oneof=open done"`
+	Status      *string    `json:"status"`
 }
 
-// AuthResponse represents the response body for authentication endpoints
+/**
+ * AuthResponse represents the response body for authentication endpoints.
+ */
 type AuthResponse struct {
 	Token string `json:"token"`
 	User  User   `json:"user"`
-}
-
-// ErrorResponse represents an error response body
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message,omitempty"`
 }
