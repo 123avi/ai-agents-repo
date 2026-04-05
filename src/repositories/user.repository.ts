@@ -1,40 +1,34 @@
+/**
+ * User data access layer
+ */
+
 import { Pool } from 'pg';
-import { User } from '../models/user.model';
 import { logger } from '../utils/logger';
 
+interface User {
+  id: string;
+  email: string;
+  passwordHash: string;
+  createdAt: Date;
+}
+
+// Database connection pool - this would be injected or imported from a database module
+declare const pool: Pool;
+
 /**
- * User repository handling database operations for user entities
+ * Retrieves user by email address
+ * @param email - User email address
+ * @returns User data or null if not found
+ * @throws {Error} If database operation fails
  */
-export class UserRepository {
-  private db: Pool;
-
-  constructor(database: Pool) {
-    this.db = database;
-  }
-
-  /**
-   * Finds user by email address
-   * @param email - Email address to search for
-   * @returns User object if found, null otherwise
-   */
-  async findByEmail(email: string): Promise<User | null> {
-    const query = `
-      SELECT id, email, password_hash, created_at, updated_at 
-      FROM users 
-      WHERE email = $1
-    `;
-    
-    try {
-      const result = await this.db.query(query, [email]);
-      
-      if (result.rows.length === 0) {
-        return null;
-      }
-      
-      return result.rows[0] as User;
-    } catch (error) {
-      logger.error('Database error in findByEmail:', error);
-      throw error;
-    }
+export async function getUserByEmail(email: string): Promise<User | null> {
+  const query = 'SELECT id, email, password_hash as "passwordHash", created_at as "createdAt" FROM users WHERE email = $1';
+  
+  try {
+    const result = await pool.query(query, [email]);
+    return result.rows[0] || null;
+  } catch (error) {
+    logger.error('Failed to retrieve user by email', { email, error });
+    throw error;
   }
 }
