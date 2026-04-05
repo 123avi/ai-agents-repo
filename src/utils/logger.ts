@@ -1,66 +1,119 @@
-import pino, { Logger } from 'pino';
-
-/** Log levels supported by the application */
-const LOG_LEVELS = {
-  TRACE: 'trace',
-  DEBUG: 'debug',
-  INFO: 'info',
-  WARN: 'warn',
-  ERROR: 'error',
-  FATAL: 'fatal'
-} as const;
-
-/** Default log level for production */
-const DEFAULT_LOG_LEVEL = 'info';
+/**
+ * Structured logging utility for the application
+ * Provides sanitized logging that doesn't expose sensitive information
+ */
 
 /**
- * Creates and configures a production-ready logger using Pino
- * Supports structured logging with proper log levels and formatting
- * @returns {Logger} Configured Pino logger instance
+ * Log levels enum
  */
-function createLogger(): Logger {
-  const logLevel = process.env.LOG_LEVEL || DEFAULT_LOG_LEVEL;
+enum LogLevel {
+  ERROR = 'error',
+  WARN = 'warn',
+  INFO = 'info',
+  DEBUG = 'debug'
+}
+
+/**
+ * Log entry structure
+ */
+interface LogEntry {
+  level: LogLevel;
+  message: string;
+  timestamp: string;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Sanitizes log metadata to remove sensitive information
+ * @param metadata - Raw metadata object
+ * @returns Sanitized metadata
+ */
+function sanitizeMetadata(metadata?: Record<string, any>): Record<string, any> {
+  if (!metadata) return {};
   
-  const pinoConfig = {
-    level: logLevel,
-    formatters: {
-      level: (label: string) => {
-        return { level: label.toUpperCase() };
-      },
-    },
-    timestamp: pino.stdTimeFunctions.isoTime,
-    ...(process.env.NODE_ENV === 'production' 
-      ? {} 
-      : { transport: { target: 'pino-pretty', options: { colorize: true } } }
-    )
+  const sanitized = { ...metadata };
+  
+  // Remove sensitive fields
+  const sensitiveFields = ['password', 'token', 'authorization', 'secret', 'key'];
+  sensitiveFields.forEach(field => {
+    if (sanitized[field]) {
+      sanitized[field] = '[REDACTED]';
+    }
+  });
+  
+  return sanitized;
+}
+
+/**
+ * Creates a structured log entry
+ * @param level - Log level
+ * @param message - Log message
+ * @param metadata - Optional metadata
+ */
+function createLogEntry(level: LogLevel, message: string, metadata?: Record<string, any>): LogEntry {
+  return {
+    level,
+    message,
+    timestamp: new Date().toISOString(),
+    metadata: sanitizeMetadata(metadata)
   };
+}
+
+/**
+ * Outputs log entry to appropriate destination
+ * @param entry - Log entry to output
+ */
+function outputLog(entry: LogEntry): void {
+  const logString = JSON.stringify(entry);
   
-  return pino(pinoConfig);
-}
-
-/** Global logger instance */
-export const logger = createLogger();
-
-/**
- * Logs database connection events with structured data
- * @param {string} event - The database event type
- * @param {Record<string, unknown>} metadata - Additional event metadata
- */
-export function logDatabaseEvent(event: string, metadata: Record<string, unknown> = {}): void {
-  logger.info({ event, ...metadata }, `Database event: ${event}`);
+  // In development, also output to console for readability
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[${entry.level.toUpperCase()}] ${entry.message}`, entry.metadata || '');
+  }
+  
+  // Always output structured JSON for log aggregation
+  process.stdout.write(logString + '\n');
 }
 
 /**
- * Logs database errors with proper error context
- * @param {string} operation - The database operation that failed
- * @param {Error} error - The error that occurred
- * @param {Record<string, unknown>} context - Additional error context
+ * Structured logger implementation
  */
-export function logDatabaseError(operation: string, error: Error, context: Record<string, unknown> = {}): void {
-  logger.error({ 
-    operation, 
-    error: error.message, 
-    stack: error.stack,
-    ...context 
-  }, `Database operation failed: ${operation}`);
-}
+export const logger = {
+  /**
+   * Log error messages
+   * @param message - Error message
+   * @param metadata - Optional error context
+   */
+  error: (message: string, metadata?: Record<string, any>): void => {
+    outputLog(createLogEntry(LogLevel.ERROR, message, metadata));
+  },
+
+  /**
+   * Log warning messages
+   * @param message - Warning message
+   * @param metadata - Optional warning context
+   */
+  warn: (message: string, metadata?: Record<string, any>): void => {
+    outputLog(createLogEntry(LogLevel.WARN, message, metadata));
+  },
+
+  /**
+   * Log informational messages
+   * @param message - Info message
+   * @param metadata - Optional info context
+   */
+  info: (message: string, metadata?: Record<string, any>): void => {
+    outputLog(createLogEntry(LogLevel.INFO, message, metadata));
+  },
+
+  /**
+   * Log debug messages
+   * @param message - Debug message
+   * @param metadata - Optional debug context
+   */
+  debug: (message: string, metadata?: Record<string, any>): void => {
+    if (process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true') {
+      outputLog(createLogEntry(LogLevel.DEBUG, message, metadata));
+    }
+  }
+};
