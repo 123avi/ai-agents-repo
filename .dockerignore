@@ -1,63 +1,10 @@
-# Exclude sensitive and unnecessary files from Docker build context
-
-# Dependencies
 node_modules
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Environment and secrets
-.env
-.env.local
-.env.*.local
-*.key
-*.pem
-*.p12
-*.pfx
-secrets/
-
-# IDE and editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Git files
+npm-debug.log
+dist
+coverage
 .git
 .gitignore
 README.md
-
-# Docker files
-Dockerfile*
-docker-compose*.yml
-.dockerignore
-
-# Build artifacts
-dist/
-build/
-coverage/
-.nyc_output/
-
-# Logs
-logs/
+.env
+.nyc_output
 *.log
-
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Temporary files
-tmp/
-temp/
