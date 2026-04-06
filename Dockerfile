@@ -1,31 +1,30 @@
-FROM node:18-alpine
+# Development Dockerfile with multi-stage build
+# This Dockerfile supports both development and production builds
+# Dev stage includes dev dependencies for hot reload functionality
 
-# Create app directory
-WORKDIR /usr/src/app
-
-# Copy package files first for better caching
+# Base stage with common dependencies
+FROM node:18-alpine AS base
+WORKDIR /app
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy source code
+# Development stage - includes dev dependencies
+FROM base AS development
+RUN npm ci --include=dev
 COPY . .
-
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nextjs -u 1001
-
-# Change ownership of the working directory
-RUN chown -R nextjs:nodejs /usr/src/app
-USER nextjs
-
-# Expose port
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 -G nodejs
+USER nodejs
 EXPOSE 3000
+CMD ["npm", "run", "dev"]
 
-# Health check using node instead of curl
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
-
-# Start the application
+# Production stage - production dependencies only
+FROM base AS production
+RUN npm ci --only=production && npm cache clean --force
+COPY . .
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 -G nodejs && \
+    chown -R nodejs:nodejs /app
+USER nodejs
+EXPOSE 3000
 CMD ["npm", "start"]
