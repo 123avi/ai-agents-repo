@@ -1,35 +1,13 @@
 import { Router } from 'express';
-import { AuthController } from '../controllers/authController';
-import { UserService } from '../services/userService';
+import { register, login, registerValidation, loginValidation } from '../controllers/authController';
+
+const router = Router();
 
 /**
- * Authentication routes configuration
- * @param userService - User service instance for dependency injection
- * @returns Configured Express router
+ * Authentication routes
+ * Handles user registration and login endpoints
  */
-export function createAuthRoutes(userService: UserService): Router {
-  const router = Router();
-  const authController = new AuthController(userService);
+router.post('/register', registerValidation, register);
+router.post('/login', loginValidation, login);
 
-  /**
-   * POST /api/auth/register
-   * User registration endpoint
-   */
-  router.post(
-    '/register',
-    AuthController.registerValidation,
-    authController.register
-  );
-
-  /**
-   * POST /api/auth/login
-   * User login endpoint
-   */
-  router.post(
-    '/login',
-    AuthController.loginValidation,
-    authController.login
-  );
-
-  return router;
-}
+export default router;
