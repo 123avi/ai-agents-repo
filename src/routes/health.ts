@@ -1,40 +1,33 @@
 import { Router, Request, Response } from 'express';
-import { DatabasePool } from '../config/database';
+import { performHealthCheck } from '../utils/healthCheck';
+import { logger } from '../utils/logger';
 
 const router = Router();
 
 /**
  * Health check endpoint
- * Tests database connectivity using the main application's connection pool
+ * GET /health
+ * Returns application and database health status
  */
-router.get('/', async (req: Request, res: Response): Promise<void> => {
+router.get('/health', async (req: Request, res: Response) => {
   try {
-    const isDbHealthy = await DatabasePool.testConnection();
+    const healthStatus = await performHealthCheck();
     
-    if (!isDbHealthy) {
-      res.status(503).json({
-        status: 'unhealthy',
-        timestamp: new Date().toISOString(),
-        services: {
-          database: 'down'
-        }
-      });
-      return;
+    const statusCode = healthStatus.status === 'healthy' ? 200 : 503;
+    
+    res.status(statusCode).json(healthStatus);
+    
+    if (healthStatus.status === 'unhealthy') {
+      logger.warn('Health check endpoint returned unhealthy status');
     }
-
-    res.status(200).json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      services: {
-        database: 'up'
-      }
-    });
   } catch (error) {
-    console.error('Health check failed:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Health check failed';
+    logger.error('Health check endpoint error', { error: errorMessage });
+    
     res.status(503).json({
       status: 'unhealthy',
       timestamp: new Date().toISOString(),
-      error: 'Internal server error'
+      error: errorMessage
     });
   }
 });
