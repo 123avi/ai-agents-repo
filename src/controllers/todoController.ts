@@ -1,141 +1,198 @@
 import { Request, Response } from 'express';
-import { TodoService } from '../services/TodoService';
-
-const VALID_TODO_STATUSES = ['pending', 'completed'] as const;
+import { todoService } from '../services/todoService';
+import { isValidTodoStatus, validateTodoId } from '../utils/validation';
+import { logger } from '../utils/logger';
 
 /**
- * Controller for handling todo-related HTTP requests.
- * All endpoints require JWT authentication via authMiddleware.
+ * Request interface with authenticated user
  */
-export class TodoController {
-  private todoService: TodoService;
+interface AuthenticatedRequest extends Request {
+  user?: {
+    id: number;
+  };
+}
 
-  constructor(todoService: TodoService) {
-    this.todoService = todoService;
+/**
+ * Validates that user is authenticated
+ * @param req - Express request object
+ * @throws Error with 401 status if user not authenticated
+ */
+function validateUserAuthentication(req: AuthenticatedRequest): number {
+  if (!req.user?.id) {
+    const error = new Error('Unauthorized: User not authenticated');
+    (error as any).status = 401;
+    throw error;
   }
+  return req.user.id;
+}
 
-  /**
-   * Creates a new todo item for the authenticated user.
-   * @param req - Express request with authenticated user
-   * @param res - Express response
-   */
-  async createTodo(req: Request, res: Response): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      const { title, description } = req.body;
+/**
+ * Creates a new todo item
+ * POST /api/todos
+ */
+export async function createTodo(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = validateUserAuthentication(req);
+    const { title, description, status = 'pending' } = req.body;
 
-      const todo = await this.todoService.createTodo(userId, { title, description });
-      res.status(201).json(todo);
-    } catch (error) {
-      this.handleError(error, res);
+    if (!title || typeof title !== 'string' || title.trim().length === 0) {
+      res.status(400).json({ error: 'Title is required and must be a non-empty string' });
+      return;
     }
+
+    if (status && !isValidTodoStatus(status)) {
+      res.status(400).json({ error: 'Invalid status. Must be: pending, in-progress, or completed' });
+      return;
+    }
+
+    const todo = await todoService.createTodo({
+      title: title.trim(),
+      description: description?.trim() || '',
+      status,
+      userId
+    });
+
+    res.status(201).json(todo);
+  } catch (error) {
+    logger.error('Error creating todo:', error);
+    const status = (error as any).status || 500;
+    const message = status === 401 ? (error as Error).message : 'Failed to create todo';
+    res.status(status).json({ error: message });
   }
+}
 
-  /**
-   * Retrieves todos for the authenticated user with optional status filtering.
-   * @param req - Express request with authenticated user and optional status query
-   * @param res - Express response
-   */
-  async getTodos(req: Request, res: Response): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      const { status } = req.query;
+/**
+ * Retrieves user's todo items with optional status filter
+ * GET /api/todos
+ */
+export async function getTodos(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = validateUserAuthentication(req);
+    const { status } = req.query;
 
-      if (status && !VALID_TODO_STATUSES.includes(status as any)) {
-        res.status(400).json({ error: 'Invalid status parameter. Must be pending or completed.' });
-        return;
-      }
-
-      const todos = await this.todoService.getTodos(userId, status as string);
-      res.status(200).json(todos);
-    } catch (error) {
-      this.handleError(error, res);
+    if (status && typeof status === 'string' && !isValidTodoStatus(status)) {
+      res.status(400).json({ error: 'Invalid status filter. Must be: pending, in-progress, or completed' });
+      return;
     }
+
+    const todos = await todoService.getTodosByUser(userId, status as string);
+    res.status(200).json(todos);
+  } catch (error) {
+    logger.error('Error fetching todos:', error);
+    const status = (error as any).status || 500;
+    const message = status === 401 ? (error as Error).message : 'Failed to fetch todos';
+    res.status(status).json({ error: message });
   }
+}
 
-  /**
-   * Retrieves a single todo by ID for the authenticated user.
-   * @param req - Express request with todo ID parameter
-   * @param res - Express response
-   */
-  async getTodoById(req: Request, res: Response): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      const todoId = parseInt(req.params.id);
+/**
+ * Retrieves a single todo item by ID
+ * GET /api/todos/:id
+ */
+export async function getTodoById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = validateUserAuthentication(req);
+    const todoId = validateTodoId(req.params.id);
 
-      const todo = await this.todoService.getTodoById(userId, todoId);
-      if (!todo) {
-        res.status(404).json({ error: 'Todo not found' });
-        return;
-      }
-
-      res.status(200).json(todo);
-    } catch (error) {
-      this.handleError(error, res);
+    const todo = await todoService.getTodoById(todoId, userId);
+    if (!todo) {
+      res.status(404).json({ error: 'Todo not found' });
+      return;
     }
+
+    res.status(200).json(todo);
+  } catch (error) {
+    logger.error('Error fetching todo by ID:', error);
+    const status = (error as any).status || 500;
+    let message = 'Failed to fetch todo';
+    
+    if (status === 401) {
+      message = (error as Error).message;
+    } else if ((error as Error).message.includes('Invalid todo ID')) {
+      res.status(400).json({ error: (error as Error).message });
+      return;
+    }
+    
+    res.status(status).json({ error: message });
   }
+}
 
-  /**
-   * Updates a todo item for the authenticated user.
-   * @param req - Express request with todo ID and update data
-   * @param res - Express response
-   */
-  async updateTodo(req: Request, res: Response): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      const todoId = parseInt(req.params.id);
-      const updateData = req.body;
+/**
+ * Updates an existing todo item
+ * PUT /api/todos/:id
+ */
+export async function updateTodo(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = validateUserAuthentication(req);
+    const todoId = validateTodoId(req.params.id);
+    const { title, description, status } = req.body;
 
-      const todo = await this.todoService.updateTodo(userId, todoId, updateData);
-      if (!todo) {
-        res.status(404).json({ error: 'Todo not found' });
-        return;
-      }
-
-      res.status(200).json(todo);
-    } catch (error) {
-      this.handleError(error, res);
+    if (title !== undefined && (typeof title !== 'string' || title.trim().length === 0)) {
+      res.status(400).json({ error: 'Title must be a non-empty string' });
+      return;
     }
+
+    if (status && !isValidTodoStatus(status)) {
+      res.status(400).json({ error: 'Invalid status. Must be: pending, in-progress, or completed' });
+      return;
+    }
+
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title.trim();
+    if (description !== undefined) updateData.description = description.trim();
+    if (status !== undefined) updateData.status = status;
+
+    const todo = await todoService.updateTodo(todoId, updateData, userId);
+    if (!todo) {
+      res.status(404).json({ error: 'Todo not found' });
+      return;
+    }
+
+    res.status(200).json(todo);
+  } catch (error) {
+    logger.error('Error updating todo:', error);
+    const status = (error as any).status || 500;
+    let message = 'Failed to update todo';
+    
+    if (status === 401) {
+      message = (error as Error).message;
+    } else if ((error as Error).message.includes('Invalid todo ID')) {
+      res.status(400).json({ error: (error as Error).message });
+      return;
+    }
+    
+    res.status(status).json({ error: message });
   }
+}
 
-  /**
-   * Deletes a todo item for the authenticated user.
-   * @param req - Express request with todo ID parameter
-   * @param res - Express response
-   */
-  async deleteTodo(req: Request, res: Response): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      const todoId = parseInt(req.params.id);
+/**
+ * Deletes a todo item
+ * DELETE /api/todos/:id
+ */
+export async function deleteTodo(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = validateUserAuthentication(req);
+    const todoId = validateTodoId(req.params.id);
 
-      const deleted = await this.todoService.deleteTodo(userId, todoId);
-      if (!deleted) {
-        res.status(404).json({ error: 'Todo not found' });
-        return;
-      }
-
-      res.status(204).send();
-    } catch (error) {
-      this.handleError(error, res);
+    const deleted = await todoService.deleteTodo(todoId, userId);
+    if (!deleted) {
+      res.status(404).json({ error: 'Todo not found' });
+      return;
     }
-  }
 
-  /**
-   * Handles errors with appropriate HTTP responses while preserving useful context.
-   * @param error - The error to handle
-   * @param res - Express response
-   */
-  private handleError(error: any, res: Response): void {
-    console.error('TodoController error:', error);
-
-    if (error.name === 'ValidationError') {
-      res.status(400).json({ error: 'Validation failed', details: error.message });
-    } else if (error.name === 'NotFoundError') {
-      res.status(404).json({ error: error.message || 'Resource not found' });
-    } else if (error.name === 'UnauthorizedError') {
-      res.status(403).json({ error: 'Access denied' });
-    } else {
-      res.status(500).json({ error: 'Internal server error' });
+    res.status(204).send();
+  } catch (error) {
+    logger.error('Error deleting todo:', error);
+    const status = (error as any).status || 500;
+    let message = 'Failed to delete todo';
+    
+    if (status === 401) {
+      message = (error as Error).message;
+    } else if ((error as Error).message.includes('Invalid todo ID')) {
+      res.status(400).json({ error: (error as Error).message });
+      return;
     }
+    
+    res.status(status).json({ error: message });
   }
 }
