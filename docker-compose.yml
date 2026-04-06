@@ -1,39 +1,60 @@
+# Docker Compose configuration for local development
+# Provides PostgreSQL database and Node.js application with hot reload
+
 version: '3.8'
 
 services:
+  # PostgreSQL Database Service
+  postgres:
+    image: postgres:15-alpine
+    container_name: todo-api-postgres
+    environment:
+      POSTGRES_DB: todo_api
+      POSTGRES_USER: todo_user
+      POSTGRES_PASSWORD: todo_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todo_user -d todo_api"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Node.js Application Service
   app:
-    build: .
+    build:
+      context: .
+      target: development
+    container_name: todo-api-app
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=development
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=${DB_NAME:-todo_db}
-      - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-password}
-      - JWT_SECRET=${JWT_SECRET:-dev-secret-key}
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: todo_api
+      DB_USER: todo_user
+      DB_PASSWORD: todo_password
+      JWT_SECRET: your-jwt-secret-key
+      PORT: 3000
+    volumes:
+      # Mount source code for hot reload, excluding sensitive files
+      - ./src:/app/src:ro
+      - ./package*.json:/app/package*.json:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
     depends_on:
-      - postgres
-    volumes:
-      - .:/usr/src/app
-      - /usr/src/app/node_modules
-    command: npm run dev
-
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_DB=${DB_NAME:-todo_db}
-      - POSTGRES_USER=${DB_USER:-postgres}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-todo_db}"]
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 5
+      retries: 3
+      start_period: 40s
 
 volumes:
   postgres_data:
+    driver: local
