@@ -7,37 +7,35 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      - DB_HOST=db
+      - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=${DB_NAME}
+      - DB_NAME=todoapi
+      - DB_USER=todouser
+      - DB_PASSWORD=todopass
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - .:/app
       - /app/node_modules
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
+    command: npm run dev
 
-  db:
-    image: postgres:15-alpine
+  postgres:
+    image: postgres:15
     environment:
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_DB=todoapi
+      - POSTGRES_USER=todouser
+      - POSTGRES_PASSWORD=todopass
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U todouser -d todoapi"]
+      interval: 5s
+      timeout: 3s
       retries: 5
-    restart: unless-stopped
 
 volumes:
   postgres_data:
