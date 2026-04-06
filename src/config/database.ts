@@ -1,42 +1,107 @@
-/**
- * Database configuration module
- * Centralizes all database connection settings and environment variables
- */
+import { Pool, PoolConfig } from 'pg';
+import { logger } from '../utils/logger';
 
-/** Minimum connections required by NFR */
-const MIN_CONNECTIONS = 20;
+const DB_HOST = process.env.DB_HOST || 'localhost';
+const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);
+const DB_USER = process.env.DB_USER || 'todo_user';
+const DB_PASSWORD = process.env.DB_PASSWORD || '';
+const DB_NAME = process.env.DB_NAME || 'todo_db';
+const DATABASE_URL = process.env.DATABASE_URL || 
+  `postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
 
-/** Default maximum connections for connection pool */
-const DEFAULT_MAX_CONNECTIONS = 100;
-
-/** Default connection timeout in milliseconds */
-const DEFAULT_CONNECTION_TIMEOUT = 30000;
-
-/** Default idle timeout in milliseconds */
-const DEFAULT_IDLE_TIMEOUT = 10000;
-
-/**
- * Database configuration object constructed from environment variables
- * Validates required environment variables and provides defaults
- */
-export const DB_CONFIG = {
-  connectionString: process.env.DATABASE_URL || '',
-  min: MIN_CONNECTIONS,
-  max: parseInt(process.env.DB_MAX_CONNECTIONS || DEFAULT_MAX_CONNECTIONS.toString(), 10),
-  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || DEFAULT_CONNECTION_TIMEOUT.toString(), 10),
-  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || DEFAULT_IDLE_TIMEOUT.toString(), 10),
-};
+const MAX_POOL_SIZE = 20;
+const MIN_POOL_SIZE = 2;
+const CONNECTION_TIMEOUT_MS = 30000;
+const IDLE_TIMEOUT_MS = 10000;
 
 /**
- * Validates that all required database configuration is present
- * @throws {Error} If DATABASE_URL environment variable is missing
+ * Database connection pool configuration and management
+ * Provides connection pooling for PostgreSQL database with health monitoring
  */
-export function validateDatabaseConfig(): void {
-  if (!DB_CONFIG.connectionString) {
-    throw new Error('DATABASE_URL environment variable is required');
+export class DatabasePool {
+  private static instance: DatabasePool;
+  private pool: Pool;
+
+  private constructor() {
+    const config: PoolConfig = {
+      connectionString: DATABASE_URL,
+      max: MAX_POOL_SIZE,
+      min: MIN_POOL_SIZE,
+      connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+      idleTimeoutMillis: IDLE_TIMEOUT_MS,
+    };
+
+    this.pool = new Pool(config);
+    this.setupPoolEventHandlers();
   }
-  
-  if (DB_CONFIG.min < MIN_CONNECTIONS) {
-    throw new Error(`Minimum connections must be at least ${MIN_CONNECTIONS} per NFR requirements`);
+
+  /**
+   * Get singleton instance of database pool
+   * @returns DatabasePool instance
+   */
+  public static getInstance(): DatabasePool {
+    if (!DatabasePool.instance) {
+      DatabasePool.instance = new DatabasePool();
+    }
+    return DatabasePool.instance;
+  }
+
+  /**
+   * Get database connection pool
+   * @returns PostgreSQL connection pool
+   */
+  public getPool(): Pool {
+    return this.pool;
+  }
+
+  /**
+   * Test database connection and return detailed status
+   * @returns Promise with connection status and error details
+   */
+  public async testConnection(): Promise<{ connected: boolean; error?: string; details?: any }> {
+    try {
+      const client = await this.pool.connect();
+      const result = await client.query('SELECT NOW()');
+      client.release();
+      
+      logger.info('Database connection test successful');
+      return { connected: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorDetails = {
+        code: error instanceof Error && 'code' in error ? error.code : undefined,
+        host: DB_HOST,
+        port: DB_PORT,
+        database: DB_NAME,
+        user: DB_USER
+      };
+      
+      logger.error('Database connection test failed', { error: errorMessage, details: errorDetails });
+      return { 
+        connected: false, 
+        error: errorMessage,
+        details: errorDetails
+      };
+    }
+  }
+
+  private setupPoolEventHandlers(): void {
+    this.pool.on('error', (err) => {
+      logger.error('Database pool error', { error: err.message });
+    });
+
+    this.pool.on('connect', () => {
+      logger.debug('New database connection established');
+    });
+  }
+
+  /**
+   * Close all database connections
+   */
+  public async close(): Promise<void> {
+    await this.pool.end();
+    logger.info('Database pool closed');
   }
 }
+
+export const db = DatabasePool.getInstance();
