@@ -1,95 +1,54 @@
-import { Pool } from 'pg';
-
 /**
- * Database configuration constants
+ * Database configuration using environment variables
  */
-const DB_MIN_CONNECTIONS = 20;
-const DB_MAX_CONNECTIONS = 100;
-const DB_IDLE_TIMEOUT_MS = 30000;
-const DB_CONNECTION_TIMEOUT_MS = 2000;
-
-/**
- * Validates and extracts DATABASE_URL from environment
- * @throws {Error} If DATABASE_URL is not provided or empty
- */
-function validateDatabaseUrl(): string {
-  const connectionString = process.env.DATABASE_URL;
-  
-  if (!connectionString || connectionString.trim().length === 0) {
-    throw new Error('DATABASE_URL environment variable is required and cannot be empty');
-  }
-  
-  return connectionString.trim();
+export interface DatabaseConfig {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+  ssl: boolean;
+  connectionTimeoutMillis: number;
+  idleTimeoutMillis: number;
+  max: number;
+  min: number;
 }
 
 /**
- * Database configuration object with validated connection string
+ * Default configuration constants
  */
-export const DB_CONFIG = {
-  connectionString: validateDatabaseUrl(),
-  min: DB_MIN_CONNECTIONS,
-  max: DB_MAX_CONNECTIONS,
-  idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
-  connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS,
-};
+export const DEFAULT_CONFIG = {
+  PORT: 5432,
+  CONNECTION_TIMEOUT_MS: 10000,
+  IDLE_TIMEOUT_MS: 30000,
+  MAX_CONNECTIONS: 20,
+  MIN_CONNECTIONS: 10,
+  SSL_ENABLED: true
+} as const;
 
 /**
- * Global connection pool instance
+ * Get database configuration from environment variables
+ * @returns {DatabaseConfig} Database configuration object
+ * @throws {Error} If required environment variables are missing
  */
-let connectionPool: Pool | null = null;
-
-/**
- * Gets or creates the database connection pool
- * @returns {Pool} PostgreSQL connection pool
- */
-export function getConnectionPool(): Pool {
-  if (!connectionPool) {
-    connectionPool = new Pool(DB_CONFIG);
-    
-    connectionPool.on('error', (err) => {
-      console.error('Database pool error:', err);
-    });
-  }
+export function getDatabaseConfig(): DatabaseConfig {
+  const requiredVars = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
+  const missingVars = requiredVars.filter(varName => !process.env[varName]);
   
-  return connectionPool;
-}
-
-/**
- * Checks the health of database connections
- * @returns {Promise<boolean>} True if connection is healthy, false otherwise
- */
-export async function checkConnectionHealth(): Promise<boolean> {
-  const pool = getConnectionPool();
-  let client;
-  
-  try {
-    client = await pool.connect();
-    const result = await client.query('SELECT 1 as health_check');
-    return result.rows.length > 0 && result.rows[0].health_check === 1;
-  } catch (error) {
-    console.error('Database health check failed:', error);
-    return false;
-  } finally {
-    if (client) {
-      client.release();
-    }
+  if (missingVars.length > 0) {
+    throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
   }
-}
 
-/**
- * Gracefully closes the connection pool
- * @returns {Promise<void>} Promise that resolves when pool is closed
- */
-export async function closeConnectionPool(): Promise<void> {
-  if (connectionPool) {
-    try {
-      await connectionPool.end();
-      console.log('Database connection pool closed successfully');
-    } catch (error) {
-      console.error('Error closing connection pool:', error);
-      throw error;
-    } finally {
-      connectionPool = null;
-    }
-  }
+  return {
+    host: process.env.DB_HOST!,
+    port: parseInt(process.env.DB_PORT || DEFAULT_CONFIG.PORT.toString(), 10),
+    database: process.env.DB_NAME!,
+    user: process.env.DB_USER!,
+    password: process.env.DB_PASSWORD!,
+    ssl: process.env.DB_SSL === 'false' ? false : DEFAULT_CONFIG.SSL_ENABLED,
+    connectionTimeoutMillis: DEFAULT_CONFIG.CONNECTION_TIMEOUT_MS,
+    idleTimeoutMillis: DEFAULT_CONFIG.IDLE_TIMEOUT_MS,
+    max: DEFAULT_CONFIG.MAX_CONNECTIONS,
+    min: DEFAULT_CONFIG.MIN_CONNECTIONS
+  };
 }
