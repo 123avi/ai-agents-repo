@@ -1,113 +1,98 @@
-import { Pool, PoolConfig } from 'pg';
-import { logger } from '../utils/logger';
-
-/** Database connection configuration constants */
-const DB_CONFIG = {
-  MIN_CONNECTIONS: 20,
-  MAX_CONNECTIONS: 50,
-  CONNECTION_TIMEOUT: 30000,
-  IDLE_TIMEOUT: 30000,
-  HEALTH_CHECK_INTERVAL: 30000
-} as const;
-
-/** PostgreSQL connection pool instance */
-let pool: Pool | null = null;
+import { Pool, PoolClient } from 'pg';
+import { getDatabaseConfig, DatabaseConfig } from './config';
 
 /**
- * Creates and configures a PostgreSQL connection pool
- * @returns {Pool} Configured connection pool
- * @throws {Error} If DATABASE_URL environment variable is not set
+ * Database connection pool singleton
  */
-export function createConnectionPool(): Pool {
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL environment variable is required');
+export class DatabaseConnection {
+  private static instance: DatabaseConnection;
+  private pool: Pool;
+  private config: DatabaseConfig;
+
+  private constructor() {
+    this.config = getDatabaseConfig();
+    this.pool = this.createPool();
+    this.setupErrorHandling();
   }
 
-  const config: PoolConfig = {
-    connectionString: process.env.DATABASE_URL,
-    min: DB_CONFIG.MIN_CONNECTIONS,
-    max: DB_CONFIG.MAX_CONNECTIONS,
-    connectionTimeoutMillis: DB_CONFIG.CONNECTION_TIMEOUT,
-    idleTimeoutMillis: DB_CONFIG.IDLE_TIMEOUT,
-    allowExitOnIdle: true
-  };
-
-  pool = new Pool(config);
-
-  // Handle pool errors
-  pool.on('error', (err) => {
-    logger.error('Unexpected error on idle client', err);
-  });
-
-  logger.info('Database connection pool created', {
-    minConnections: DB_CONFIG.MIN_CONNECTIONS,
-    maxConnections: DB_CONFIG.MAX_CONNECTIONS
-  });
-
-  return pool;
-}
-
-/**
- * Gets the existing connection pool instance
- * @returns {Pool} The connection pool instance
- * @throws {Error} If pool is not initialized
- */
-export function getConnectionPool(): Pool {
-  if (!pool) {
-    throw new Error('Connection pool not initialized. Call createConnectionPool() first.');
-  }
-  return pool;
-}
-
-/**
- * Performs a health check on the database connection
- * @returns {Promise<boolean>} True if connection is healthy, false otherwise
- */
-export async function checkConnectionHealth(): Promise<boolean> {
-  try {
-    if (!pool) {
-      logger.warn('Connection pool not initialized for health check');
-      return false;
+  /**
+   * Get singleton instance of database connection
+   * @returns {DatabaseConnection} Database connection instance
+   */
+  public static getInstance(): DatabaseConnection {
+    if (!DatabaseConnection.instance) {
+      DatabaseConnection.instance = new DatabaseConnection();
     }
+    return DatabaseConnection.instance;
+  }
 
-    const client = await pool.connect();
+  /**
+   * Create PostgreSQL connection pool
+   * @returns {Pool} Configured connection pool
+   */
+  private createPool(): Pool {
+    return new Pool({
+      host: this.config.host,
+      port: this.config.port,
+      database: this.config.database,
+      user: this.config.user,
+      password: this.config.password,
+      ssl: this.config.ssl,
+      connectionTimeoutMillis: this.config.connectionTimeoutMillis,
+      idleTimeoutMillis: this.config.idleTimeoutMillis,
+      max: this.config.max,
+      min: this.config.min
+    });
+  }
+
+  /**
+   * Setup error handling for connection pool
+   */
+  private setupErrorHandling(): void {
+    this.pool.on('error', (err: Error) => {
+      console.error('PostgreSQL pool error:', err);
+    });
+
+    this.pool.on('connect', () => {
+      console.log('New client connected to PostgreSQL');
+    });
+  }
+
+  /**
+   * Get connection pool instance
+   * @returns {Pool} Connection pool
+   */
+  public getPool(): Pool {
+    return this.pool;
+  }
+
+  /**
+   * Execute query with automatic connection handling
+   * @param {string} text SQL query text
+   * @param {any[]} params Query parameters
+   * @returns {Promise<any>} Query result
+   */
+  public async query(text: string, params?: any[]): Promise<any> {
     try {
-      const result = await client.query('SELECT 1 as healthy');
-      const isHealthy = result.rows[0]?.healthy === 1;
-      
-      if (isHealthy) {
-        logger.debug('Database health check passed');
-      } else {
-        logger.warn('Database health check returned unexpected result');
-      }
-      
-      return isHealthy;
-    } finally {
-      client.release();
+      const result = await this.pool.query(text, params);
+      return result;
+    } catch (error) {
+      console.error('Database query error:', error);
+      throw error;
     }
-  } catch (error) {
-    logger.error('Database health check failed', error);
-    return false;
-  }
-}
-
-/**
- * Gracefully shuts down the connection pool
- * @returns {Promise<void>} Promise that resolves when shutdown is complete
- */
-export async function closeConnectionPool(): Promise<void> {
-  if (!pool) {
-    logger.warn('Attempted to close non-existent connection pool');
-    return;
   }
 
-  try {
-    logger.info('Shutting down database connection pool...');
-    await pool.end();
-    pool = null;
-    logger.info('Database connection pool closed successfully');
-  } catch (error) {
-    logger.error('Error closing database connection pool', error);
-    throw error;
+  /**
+   * Close all connections in the pool
+   * @returns {Promise<void>}
+   */
+  public async close(): Promise<void> {
+    try {
+      await this.pool.end();
+      console.log('Database connection pool closed');
+    } catch (error) {
+      console.error('Error closing database pool:', error);
+      throw error;
+    }
   }
 }
