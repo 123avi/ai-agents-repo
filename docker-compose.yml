@@ -2,66 +2,38 @@ version: '3.8'
 
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: todo-api
+    build: .
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://todo_user:todo_password@postgres:5432/todo_db
-      - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret-change-in-production}
-      - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
-    volumes:
-      - .:/app
-      - /app/node_modules
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-todo_db}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-key}
     depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - todo-network
-    restart: unless-stopped
+      - postgres
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    command: npm run dev
 
   postgres:
     image: postgres:15-alpine
-    container_name: todo-postgres
     environment:
-      - POSTGRES_DB=todo_db
-      - POSTGRES_USER=todo_user
-      - POSTGRES_PASSWORD=todo_password
-      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
-    ports:
-      - "5432:5432"
+      - POSTGRES_DB=${DB_NAME:-todo_db}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init:/docker-entrypoint-initdb.d
-    networks:
-      - todo-network
-    restart: unless-stopped
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U todo_user -d todo_db"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-todo_db}"]
+      interval: 30s
+      timeout: 10s
       retries: 5
-      start_period: 30s
-    command: [
-      "postgres",
-      "-c", "max_connections=100",
-      "-c", "shared_buffers=256MB",
-      "-c", "effective_cache_size=1GB",
-      "-c", "maintenance_work_mem=64MB",
-      "-c", "checkpoint_completion_target=0.9",
-      "-c", "wal_buffers=16MB",
-      "-c", "default_statistics_target=100",
-      "-c", "random_page_cost=1.1",
-      "-c", "effective_io_concurrency=200"
-    ]
 
 volumes:
   postgres_data:
-    driver: local
-
-networks:
-  todo-network:
-    driver: bridge
