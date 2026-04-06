@@ -1,64 +1,107 @@
-import { Pool } from 'pg';
+import { Pool, PoolConfig } from 'pg';
+import { logger } from '../utils/logger';
 
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://todo_user:todo_password@localhost:5432/todo_db';
+const DB_HOST = process.env.DB_HOST || 'localhost';
+const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);
+const DB_USER = process.env.DB_USER || 'todo_user';
+const DB_PASSWORD = process.env.DB_PASSWORD || '';
+const DB_NAME = process.env.DB_NAME || 'todo_db';
+const DATABASE_URL = process.env.DATABASE_URL || 
+  `postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
+
+const MAX_POOL_SIZE = 20;
+const MIN_POOL_SIZE = 2;
+const CONNECTION_TIMEOUT_MS = 30000;
+const IDLE_TIMEOUT_MS = 10000;
 
 /**
- * Database connection pool configuration
- * Provides singleton instance for application-wide database access
+ * Database connection pool configuration and management
+ * Provides connection pooling for PostgreSQL database with health monitoring
  */
-class DatabasePool {
-  private static instance: Pool;
+export class DatabasePool {
+  private static instance: DatabasePool;
+  private pool: Pool;
+
+  private constructor() {
+    const config: PoolConfig = {
+      connectionString: DATABASE_URL,
+      max: MAX_POOL_SIZE,
+      min: MIN_POOL_SIZE,
+      connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+      idleTimeoutMillis: IDLE_TIMEOUT_MS,
+    };
+
+    this.pool = new Pool(config);
+    this.setupPoolEventHandlers();
+  }
 
   /**
-   * Get the singleton database pool instance
-   * @returns {Pool} PostgreSQL connection pool
+   * Get singleton instance of database pool
+   * @returns DatabasePool instance
    */
-  public static getInstance(): Pool {
+  public static getInstance(): DatabasePool {
     if (!DatabasePool.instance) {
-      DatabasePool.instance = new Pool({
-        connectionString: DATABASE_URL,
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000
-      });
-
-      // Handle pool errors
-      DatabasePool.instance.on('error', (err) => {
-        console.error('Unexpected error on idle client', err);
-        process.exit(-1);
-      });
+      DatabasePool.instance = new DatabasePool();
     }
-
     return DatabasePool.instance;
   }
 
   /**
-   * Test database connection
-   * @returns {Promise<boolean>} Connection status
+   * Get database connection pool
+   * @returns PostgreSQL connection pool
    */
-  public static async testConnection(): Promise<boolean> {
+  public getPool(): Pool {
+    return this.pool;
+  }
+
+  /**
+   * Test database connection and return detailed status
+   * @returns Promise with connection status and error details
+   */
+  public async testConnection(): Promise<{ connected: boolean; error?: string; details?: any }> {
     try {
-      const pool = DatabasePool.getInstance();
-      const client = await pool.connect();
-      await client.query('SELECT NOW()');
+      const client = await this.pool.connect();
+      const result = await client.query('SELECT NOW()');
       client.release();
-      return true;
+      
+      logger.info('Database connection test successful');
+      return { connected: true };
     } catch (error) {
-      console.error('Database connection test failed:', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorDetails = {
+        code: error instanceof Error && 'code' in error ? error.code : undefined,
+        host: DB_HOST,
+        port: DB_PORT,
+        database: DB_NAME,
+        user: DB_USER
+      };
+      
+      logger.error('Database connection test failed', { error: errorMessage, details: errorDetails });
+      return { 
+        connected: false, 
+        error: errorMessage,
+        details: errorDetails
+      };
     }
+  }
+
+  private setupPoolEventHandlers(): void {
+    this.pool.on('error', (err) => {
+      logger.error('Database pool error', { error: err.message });
+    });
+
+    this.pool.on('connect', () => {
+      logger.debug('New database connection established');
+    });
   }
 
   /**
    * Close all database connections
-   * @returns {Promise<void>}
    */
-  public static async close(): Promise<void> {
-    if (DatabasePool.instance) {
-      await DatabasePool.instance.end();
-    }
+  public async close(): Promise<void> {
+    await this.pool.end();
+    logger.info('Database pool closed');
   }
 }
 
-export { DatabasePool };
 export const db = DatabasePool.getInstance();
