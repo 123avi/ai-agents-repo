@@ -1,129 +1,87 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { UserRepository } from '../repositories/userRepository';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
 
-const BCRYPT_SALT_ROUNDS = 12;
-const JWT_SECRET = process.env.JWT_SECRET || '';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+const JWT_SECRET = process.env.JWT_SECRET;
+const SALT_ROUNDS = 12;
+const JWT_EXPIRES_IN = '24h';
 
-/**
- * Interface for user registration result
- */
-export interface RegisterResult {
-  exists: boolean;
-  userId?: string;
+if (!JWT_SECRET || JWT_SECRET.trim() === '') {
+  throw new Error('JWT_SECRET environment variable is required and cannot be empty');
 }
 
-/**
- * Interface for user authentication result
- */
-export interface AuthResult {
-  success: boolean;
-  token?: string;
-}
+const logger = new Logger();
 
 /**
- * User service handling authentication business logic
+ * User service handling authentication and user management
  */
 export class UserService {
   private userRepository: UserRepository;
 
-  constructor(userRepository: UserRepository) {
+  constructor(userRepository?: UserRepository) {
+    if (!userRepository) {
+      throw new Error('UserRepository is required');
+    }
     this.userRepository = userRepository;
   }
 
   /**
-   * Registers a new user
-   * @param email - User email address
-   * @param password - User password
-   * @param name - User display name
-   * @returns Registration result with user ID or conflict flag
+   * Register a new user
+   * @param email - User's email address
+   * @param password - Plain text password
+   * @param name - User's display name
+   * @returns Promise with registration result
    */
-  public async registerUser(
-    email: string,
-    password: string,
-    name: string
-  ): Promise<RegisterResult> {
+  async register(email: string, password: string, name: string) {
     try {
       const existingUser = await this.userRepository.findByEmail(email);
       if (existingUser) {
-        return { exists: true };
+        return { success: false, error: 'User already exists' };
       }
 
-      const hashedPassword = await this.hashPassword(password);
-      const userId = await this.userRepository.create({
+      const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+      const user = await this.userRepository.create({
         email,
         password: hashedPassword,
         name
       });
 
-      return { exists: false, userId };
+      return { success: true, userId: user.id };
     } catch (error) {
-      logger.error('User registration error:', error);
+      logger.error('Registration error:', error);
       throw error;
     }
   }
 
   /**
-   * Authenticates a user
-   * @param email - User email address
-   * @param password - User password
-   * @returns Authentication result with JWT token
+   * Authenticate user login
+   * @param email - User's email address
+   * @param password - Plain text password
+   * @returns Promise with login result and JWT token
    */
-  public async authenticateUser(
-    email: string,
-    password: string
-  ): Promise<AuthResult> {
+  async login(email: string, password: string) {
     try {
       const user = await this.userRepository.findByEmail(email);
       if (!user) {
-        return { success: false };
+        return { success: false, error: 'Invalid credentials' };
       }
 
-      const isValidPassword = await this.verifyPassword(password, user.password);
+      const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
-        return { success: false };
+        return { success: false, error: 'Invalid credentials' };
       }
 
-      const token = this.generateJwtToken(user.id, user.email);
+      const token = jwt.sign(
+        { userId: user.id, email: user.email },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+
       return { success: true, token };
     } catch (error) {
-      logger.error('User authentication error:', error);
+      logger.error('Login error:', error);
       throw error;
     }
-  }
-
-  /**
-   * Hashes a password using bcrypt
-   * @param password - Plain text password
-   * @returns Hashed password
-   */
-  private async hashPassword(password: string): Promise<string> {
-    return bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-  }
-
-  /**
-   * Verifies a password against a hash
-   * @param password - Plain text password
-   * @param hash - Hashed password
-   * @returns True if password matches
-   */
-  private async verifyPassword(password: string, hash: string): Promise<boolean> {
-    return bcrypt.compare(password, hash);
-  }
-
-  /**
-   * Generates a JWT token for authenticated user
-   * @param userId - User ID
-   * @param email - User email
-   * @returns JWT token
-   */
-  private generateJwtToken(userId: string, email: string): string {
-    return jwt.sign(
-      { userId, email },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
-    );
   }
 }
