@@ -1,74 +1,93 @@
-# AI Agent Pipeline
+# To-Do API
 
-This repository is managed by the AI Agent Pipeline.
-## How to run it locally
-### Step 1 — Clone your repository
-```
-git clone [https://github.com/[your-username]/[your-repo]](https://github.com/123avi/ai-agents-repo).git
-cd ai-agents-repo
-```
-### Step 2 — Install dependencies
-```
-bash
+A secure REST API for personal task management built with Node.js, TypeScript, and PostgreSQL.
+
+## Prerequisites
+
+- Node.js 18.x or 20.x LTS
+- npm 8.x or higher
+- PostgreSQL 14+
+
+## Getting Started
+
+### 1. Clone and Install Dependencies
+
+```bash
 npm install
 ```
-### Step 3 — Set up PostgreSQL
-You need a running PostgreSQL database. The easiest way on Windows is Docker:
-```
-bash
-docker run --name todo-db \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=todo_db \
-  -p 5432:5432 \
-  -d postgres:15
-```
-### Step 4 — Create a .env file
-The generated code expects these environment variables:
-```
-PORT=3000
-NODE_ENV=development
-DATABASE_URL=postgresql://postgres:password@localhost:5432/todo_db
-JWT_SECRET=my-super-secret-key-change-in-production
-CORS_ORIGIN=http://localhost:3000
-```
-### Step 5 — Run migrations (if they exist)
-```
-bash
-npm run migrate
-```
- or
-```
-npm run db:migrate
-```
-### Step 6 — Start the server
+
+### 2. Environment Setup
+
 ```bash
+cp .env.example .env
+```
+
+Update the `.env` file with your configuration:
+
+- Database connection details
+- JWT secret key
+- Server port (default: 3000)
+
+### 3. Development Scripts
+
+```bash
+# Start development server with hot reload
 npm run dev
+
+# Build for production
+npm run build
+
+# Start production server
+npm start
+
+# Lint code
+npm run lint
+
+# Fix linting issues
+npm run lint:fix
+
+# Format code
+npm run format
+
+# Check formatting
+npm run format:check
 ```
- or
-```npm start```
-### Step 7 — Test the API
-Use any API client. Here are the endpoints that should exist:
-```bash
-# Health check
-curl http://localhost:3000/health
 
-# Register a user
-curl -X POST http://localhost:3000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email": "test@example.com", "password": "password123"}'
+## Project Structure
 
-# Login
-curl -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "test@example.com", "password": "password123"}'
-
-# Create a todo (use token from login)
-curl -X POST http://localhost:3000/api/todos \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{"title": "My first todo", "status": "open"}'
-
-# Get all todos
-curl http://localhost:3000/api/todos \
-  -H "Authorization: Bearer YOUR_TOKEN"
 ```
+src/
+├── index.ts          # Application entry point
+├── controllers/      # Route handlers
+├── services/         # Business logic
+├── repositories/     # Data access layer
+├── middleware/       # Express middleware
+├── models/           # TypeScript interfaces
+├── utils/            # Helper functions
+└── config/           # Configuration files
+```
+
+## Technology Stack
+
+- **Runtime:** Node.js LTS
+- **Language:** TypeScript 5.x (strict mode)
+- **Framework:** Express.js
+- **Database:** PostgreSQL
+- **Authentication:** JWT
+- **Validation:** Joi
+- **Security:** bcrypt, helmet, cors
+
+## Development Tools
+
+- **Hot Reload:** nodemon + ts-node
+- **Linting:** ESLint with TypeScript rules
+- **Formatting:** Prettier
+- **Type Checking:** TypeScript strict mode
+
+## Environment Variables
+
+See `.env.example` for all required environment variables.
+
+## License
+
+ISC
