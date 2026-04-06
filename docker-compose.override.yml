@@ -1,24 +1,18 @@
-# Development overrides for docker-compose
-# This file is automatically merged with docker-compose.yml in development
-
 version: '3.8'
 
 services:
   app:
-    build:
-      target: development
     environment:
       - NODE_ENV=development
-      - DEBUG=todo-api:*
+      - DEBUG=app:*
+      - DB_NAME=${DB_NAME:-todo_db}
     volumes:
-      - .:/app
-      - /app/node_modules
-    command: ["npm", "run", "dev"]
-    stdin_open: true
-    tty: true
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    command: npm run dev
 
   postgres:
     environment:
-      - POSTGRES_DB=todo_db_dev
+      - POSTGRES_DB=${DB_NAME:-todo_db}
     ports:
-      - "5433:5432"  # Different port to avoid conflicts
+      - "5433:5432"
