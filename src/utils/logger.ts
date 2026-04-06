@@ -1,54 +1,92 @@
 /**
- * Structured logging utility
- * Provides consistent logging interface across the application
- * TODO: Replace with proper logging library like winston or pino for production
+ * Centralized logging utility for the application
  */
-export class Logger {
+export interface LogLevel {
+  INFO: 'info';
+  ERROR: 'error';
+  WARN: 'warn';
+  DEBUG: 'debug';
+}
+
+export const LOG_LEVELS: LogLevel = {
+  INFO: 'info',
+  ERROR: 'error',
+  WARN: 'warn',
+  DEBUG: 'debug'
+};
+
+/**
+ * Logger interface for structured logging
+ */
+export interface Logger {
   /**
-   * Log informational messages
+   * Logs an informational message
    * @param message - Log message
-   * @param meta - Additional metadata
+   * @param meta - Optional metadata object
    */
-  info(message: string, meta?: any): void {
-    const timestamp = new Date().toISOString();
-    const logEntry = {
-      level: 'INFO',
-      timestamp,
-      message,
-      ...(meta && { meta })
-    };
-    console.log(JSON.stringify(logEntry));
+  info(message: string, meta?: object): void;
+
+  /**
+   * Logs an error message
+   * @param message - Error message
+   * @param meta - Optional metadata object
+   */
+  error(message: string, meta?: object): void;
+
+  /**
+   * Logs a warning message
+   * @param message - Warning message
+   * @param meta - Optional metadata object
+   */
+  warn(message: string, meta?: object): void;
+
+  /**
+   * Logs a debug message
+   * @param message - Debug message
+   * @param meta - Optional metadata object
+   */
+  debug(message: string, meta?: object): void;
+}
+
+/**
+ * Simple console logger implementation
+ */
+class ConsoleLogger implements Logger {
+  /**
+   * Logs an informational message to console
+   * @param message - Log message
+   * @param meta - Optional metadata object
+   */
+  info(message: string, meta?: object): void {
+    console.log(`[INFO] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
   }
 
   /**
-   * Log warning messages
-   * @param message - Log message
-   * @param meta - Additional metadata
+   * Logs an error message to console
+   * @param message - Error message
+   * @param meta - Optional metadata object
    */
-  warn(message: string, meta?: any): void {
-    const timestamp = new Date().toISOString();
-    const logEntry = {
-      level: 'WARN',
-      timestamp,
-      message,
-      ...(meta && { meta })
-    };
-    console.warn(JSON.stringify(logEntry));
+  error(message: string, meta?: object): void {
+    console.error(`[ERROR] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
   }
 
   /**
-   * Log error messages
-   * @param message - Log message
-   * @param error - Error object or additional metadata
+   * Logs a warning message to console
+   * @param message - Warning message
+   * @param meta - Optional metadata object
    */
-  error(message: string, error?: any): void {
-    const timestamp = new Date().toISOString();
-    const logEntry = {
-      level: 'ERROR',
-      timestamp,
-      message,
-      ...(error && { error: error.message || error })
-    };
-    console.error(JSON.stringify(logEntry));
+  warn(message: string, meta?: object): void {
+    console.warn(`[WARN] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  }
+
+  /**
+   * Logs a debug message to console
+   * @param message - Debug message
+   * @param meta - Optional metadata object
+   */
+  debug(message: string, meta?: object): void {
+    console.debug(`[DEBUG] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
   }
 }
+
+export const logger: Logger = new ConsoleLogger();
