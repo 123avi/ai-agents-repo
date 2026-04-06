@@ -1,66 +1,92 @@
-import pino, { Logger } from 'pino';
+/**
+ * Centralized logging utility for the application
+ */
+export interface LogLevel {
+  INFO: 'info';
+  ERROR: 'error';
+  WARN: 'warn';
+  DEBUG: 'debug';
+}
 
-/** Log levels supported by the application */
-const LOG_LEVELS = {
-  TRACE: 'trace',
-  DEBUG: 'debug',
+export const LOG_LEVELS: LogLevel = {
   INFO: 'info',
-  WARN: 'warn',
   ERROR: 'error',
-  FATAL: 'fatal'
-} as const;
-
-/** Default log level for production */
-const DEFAULT_LOG_LEVEL = 'info';
+  WARN: 'warn',
+  DEBUG: 'debug'
+};
 
 /**
- * Creates and configures a production-ready logger using Pino
- * Supports structured logging with proper log levels and formatting
- * @returns {Logger} Configured Pino logger instance
+ * Logger interface for structured logging
  */
-function createLogger(): Logger {
-  const logLevel = process.env.LOG_LEVEL || DEFAULT_LOG_LEVEL;
-  
-  const pinoConfig = {
-    level: logLevel,
-    formatters: {
-      level: (label: string) => {
-        return { level: label.toUpperCase() };
-      },
-    },
-    timestamp: pino.stdTimeFunctions.isoTime,
-    ...(process.env.NODE_ENV === 'production' 
-      ? {} 
-      : { transport: { target: 'pino-pretty', options: { colorize: true } } }
-    )
-  };
-  
-  return pino(pinoConfig);
-}
+export interface Logger {
+  /**
+   * Logs an informational message
+   * @param message - Log message
+   * @param meta - Optional metadata object
+   */
+  info(message: string, meta?: object): void;
 
-/** Global logger instance */
-export const logger = createLogger();
+  /**
+   * Logs an error message
+   * @param message - Error message
+   * @param meta - Optional metadata object
+   */
+  error(message: string, meta?: object): void;
 
-/**
- * Logs database connection events with structured data
- * @param {string} event - The database event type
- * @param {Record<string, unknown>} metadata - Additional event metadata
- */
-export function logDatabaseEvent(event: string, metadata: Record<string, unknown> = {}): void {
-  logger.info({ event, ...metadata }, `Database event: ${event}`);
+  /**
+   * Logs a warning message
+   * @param message - Warning message
+   * @param meta - Optional metadata object
+   */
+  warn(message: string, meta?: object): void;
+
+  /**
+   * Logs a debug message
+   * @param message - Debug message
+   * @param meta - Optional metadata object
+   */
+  debug(message: string, meta?: object): void;
 }
 
 /**
- * Logs database errors with proper error context
- * @param {string} operation - The database operation that failed
- * @param {Error} error - The error that occurred
- * @param {Record<string, unknown>} context - Additional error context
+ * Simple console logger implementation
  */
-export function logDatabaseError(operation: string, error: Error, context: Record<string, unknown> = {}): void {
-  logger.error({ 
-    operation, 
-    error: error.message, 
-    stack: error.stack,
-    ...context 
-  }, `Database operation failed: ${operation}`);
+class ConsoleLogger implements Logger {
+  /**
+   * Logs an informational message to console
+   * @param message - Log message
+   * @param meta - Optional metadata object
+   */
+  info(message: string, meta?: object): void {
+    console.log(`[INFO] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  }
+
+  /**
+   * Logs an error message to console
+   * @param message - Error message
+   * @param meta - Optional metadata object
+   */
+  error(message: string, meta?: object): void {
+    console.error(`[ERROR] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  }
+
+  /**
+   * Logs a warning message to console
+   * @param message - Warning message
+   * @param meta - Optional metadata object
+   */
+  warn(message: string, meta?: object): void {
+    console.warn(`[WARN] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  }
+
+  /**
+   * Logs a debug message to console
+   * @param message - Debug message
+   * @param meta - Optional metadata object
+   */
+  debug(message: string, meta?: object): void {
+    console.debug(`[DEBUG] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  }
 }
+
+export const logger: Logger = new ConsoleLogger();
