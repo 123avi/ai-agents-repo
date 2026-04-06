@@ -1,29 +1,54 @@
 /**
- * Simple logger utility
+ * Structured logging utility
+ * Provides consistent logging interface across the application
+ * TODO: Replace with proper logging library like winston or pino for production
  */
-export const logger = {
+export class Logger {
   /**
-   * Logs error messages
-   * @param message - Error message
-   * @param error - Error object
+   * Log informational messages
+   * @param message - Log message
+   * @param meta - Additional metadata
    */
-  error: (message: string, error?: any): void => {
-    console.error(`[ERROR] ${message}`, error);
-  },
-
-  /**
-   * Logs info messages
-   * @param message - Info message
-   */
-  info: (message: string): void => {
-    console.log(`[INFO] ${message}`);
-  },
-
-  /**
-   * Logs warning messages
-   * @param message - Warning message
-   */
-  warn: (message: string): void => {
-    console.warn(`[WARN] ${message}`);
+  info(message: string, meta?: any): void {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      level: 'INFO',
+      timestamp,
+      message,
+      ...(meta && { meta })
+    };
+    console.log(JSON.stringify(logEntry));
   }
-};
+
+  /**
+   * Log warning messages
+   * @param message - Log message
+   * @param meta - Additional metadata
+   */
+  warn(message: string, meta?: any): void {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      level: 'WARN',
+      timestamp,
+      message,
+      ...(meta && { meta })
+    };
+    console.warn(JSON.stringify(logEntry));
+  }
+
+  /**
+   * Log error messages
+   * @param message - Log message
+   * @param error - Error object or additional metadata
+   */
+  error(message: string, error?: any): void {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      level: 'ERROR',
+      timestamp,
+      message,
+      ...(error && { error: error.message || error })
+    };
+    console.error(JSON.stringify(logEntry));
+  }
+}
