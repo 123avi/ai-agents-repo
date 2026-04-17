@@ -1,97 +1,79 @@
-import { Pool } from 'pg';
-
 /**
- * Minimum number of connections in the pool as per NFR requirements
+ * Database configuration module
+ * Loads and validates database connection parameters from environment variables
  */
-const MIN_POOL_SIZE = 20;
 
-/**
- * Maximum number of connections in the pool
- */
-const MAX_POOL_SIZE = 50;
+import { PoolConfig } from 'pg';
 
-/**
- * Connection timeout in milliseconds
- */
-const CONNECTION_TIMEOUT = 30000;
-
-/**
- * Idle timeout in milliseconds
- */
-const IDLE_TIMEOUT = 10000;
-
-let pool: Pool | null = null;
-
-/**
- * Creates and configures a PostgreSQL connection pool
- * @returns {Pool} Configured database connection pool
- * @throws {Error} When DATABASE_URL environment variable is not set
- */
-export function createPool(): Pool {
-  if (pool) {
-    return pool;
-  }
-
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL environment variable is required');
-  }
-
-  try {
-    pool = new Pool({
-      connectionString: databaseUrl,
-      min: MIN_POOL_SIZE,
-      max: MAX_POOL_SIZE,
-      connectionTimeoutMillis: CONNECTION_TIMEOUT,
-      idleTimeoutMillis: IDLE_TIMEOUT,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    });
-
-    pool.on('error', (err) => {
-      console.error('Database pool error:', err);
-    });
-
-    return pool;
-  } catch (error) {
-    console.error('Failed to create database pool:', error);
-    throw error;
-  }
+/** Database configuration interface */
+export interface DatabaseConfig {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+  minConnections: number;
+  maxConnections: number;
+  idleTimeoutMillis: number;
 }
 
+/** Default configuration values */
+const DEFAULT_PORT = 5432;
+const DEFAULT_MIN_CONNECTIONS = 5;
+const DEFAULT_MAX_CONNECTIONS = 20;
+const DEFAULT_IDLE_TIMEOUT = 30000;
+
 /**
- * Checks the health of database connections
- * @returns {Promise<boolean>} True if database connection is healthy
+ * Validates database configuration parameters
+ * @param config - Database configuration object
+ * @throws Error if configuration is invalid
  */
-export async function checkConnectionHealth(): Promise<boolean> {
-  const currentPool = createPool();
+export function validateDatabaseConfig(config: DatabaseConfig): void {
+  if (!config.host) {
+    throw new Error('Database host is required');
+  }
   
-  try {
-    const client = await currentPool.connect();
-    try {
-      await client.query('SELECT 1');
-      return true;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error('Database health check failed:', error);
-    return false;
+  if (!config.database) {
+    throw new Error('Database name is required');
+  }
+  
+  if (!config.user) {
+    throw new Error('Database user is required');
+  }
+  
+  if (!config.password) {
+    throw new Error('Database password is required');
+  }
+  
+  if (config.minConnections < 1 || config.minConnections > 50) {
+    throw new Error('minConnections must be between 1 and 50');
+  }
+  
+  if (config.maxConnections < config.minConnections) {
+    throw new Error('maxConnections must be greater than or equal to minConnections');
+  }
+  
+  if (config.maxConnections > 100) {
+    throw new Error('maxConnections cannot exceed 100');
   }
 }
 
 /**
- * Gracefully shuts down the database connection pool
- * @returns {Promise<void>}
+ * Loads database configuration from environment variables
+ * @returns DatabaseConfig object with validated parameters
  */
-export async function closePool(): Promise<void> {
-  if (pool) {
-    try {
-      await pool.end();
-      pool = null;
-      console.log('Database pool closed successfully');
-    } catch (error) {
-      console.error('Error closing database pool:', error);
-      throw error;
-    }
-  }
+export function getDatabaseConfig(): DatabaseConfig {
+  const config: DatabaseConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || DEFAULT_PORT.toString(), 10),
+    database: process.env.DB_NAME || 'todoapi',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || '',
+    minConnections: parseInt(process.env.DB_MIN_CONNECTIONS || DEFAULT_MIN_CONNECTIONS.toString(), 10),
+    maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS || DEFAULT_MAX_CONNECTIONS.toString(), 10),
+    idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || DEFAULT_IDLE_TIMEOUT.toString(), 10)
+  };
+  
+  validateDatabaseConfig(config);
+  return config;
 }
